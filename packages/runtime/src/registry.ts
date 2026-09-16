@@ -21,7 +21,7 @@ function registerNestedChildren(target: any, root: object, path: string[], visit
   for (const key of Object.keys(raw)) {
     if (key.startsWith('$') || key.startsWith('_') || key === 'effect' || key === 'dep') continue
     try {
-      const child = raw[key]
+      const child: unknown = Reflect.get(raw, key)
       if (isReactiveCandidate(child)) {
         const childRaw = toRaw(child)
         const childPath = [...path, key]

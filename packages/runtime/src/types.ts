@@ -7,6 +7,9 @@ export interface SourceLocation {
 export type TraceConfidence = 'exact' | 'runtime' | 'inferred'
 export type TraceLevel = 'full' | 'partial'
 
+/** Reactive kinds the registry, adapter, and instrumentation actually produce. */
+export type ReactiveType = 'ref' | 'reactive' | 'computed' | 'pinia' | 'unknown'
+
 export interface ReactiveMetadata {
   id: string | number
   name?: string

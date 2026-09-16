@@ -122,13 +122,18 @@ export function safeClone(
   }
 }
 
-function mutationFieldsFromMeta(meta?: ReactiveMetadata | null) {
+type MutationMetadataFields = Pick<
+  MutationEvent,
+  'composable' | 'isExternal' | 'origin' | 'traceLevel' | 'confidence' | 'scope' | 'declaredAt'
+>
+
+function mutationFieldsFromMeta(meta?: ReactiveMetadata | null): MutationMetadataFields {
   return {
     composable: meta?.composable,
     isExternal: meta?.isExternal,
     origin: meta?.origin,
     traceLevel: meta?.traceLevel,
-    confidence: (meta?.isExternal ? 'inferred' : 'exact') as const,
+    confidence: meta?.isExternal ? 'inferred' : 'exact',
     scope: meta?.scope,
     declaredAt: meta?.source
   }

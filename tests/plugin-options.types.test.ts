@@ -11,11 +11,9 @@ import { fileURLToPath } from 'node:url'
  * `tests/plugin-options.types.ts` holds `@ts-expect-error` assertions for every
  * option that was removed from `ReactiveTracePluginOptions`. Types do not exist
  * at runtime, so the only way to verify the public surface is to typecheck it:
- * this test runs `tsc` over the fixture and fails on any diagnostic reported
- * against that file.
- *
- * Diagnostics in other files are ignored on purpose — the repo has a
- * pre-existing `tsc --noEmit` baseline that fails on unrelated source files.
+ * this test runs `tsc` over the fixture and fails on any diagnostic, so a broken
+ * dependency graph cannot hide behind the removed-option assertions. Repo-wide
+ * coverage lives in `npm run typecheck`.
  */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const FIXTURE = 'tests/plugin-options.types.ts'
@@ -26,7 +24,7 @@ const REMOVED_OPTIONS = ['include', 'exclude', 'async', 'computed', 'watch', 'pi
 const require = createRequire(import.meta.url)
 const tscBin = join(dirname(require.resolve('typescript/package.json')), 'bin', 'tsc')
 
-function typecheckFixture(): string {
+function typecheckFixture(): { status: number | null; output: string } {
   const result = spawnSync(
     process.execPath,
     [
@@ -48,7 +46,7 @@ function typecheckFixture(): string {
   )
 
   if (result.error) throw result.error
-  return `${result.stdout ?? ''}${result.stderr ?? ''}`
+  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 
 describe('§44 — Vite plugin option surface', () => {
@@ -64,11 +62,8 @@ describe('§44 — Vite plugin option surface', () => {
     }
     expect(source).toContain('@ts-expect-error events: only recorded top-level event types')
 
-    const output = typecheckFixture()
-    const fixtureDiagnostics = output
-      .split('\n')
-      .filter((line) => line.startsWith(`${FIXTURE}(`))
+    const { status, output } = typecheckFixture()
 
-    expect(fixtureDiagnostics, output.trim()).toEqual([])
+    expect(status, output.trim()).toBe(0)
   })
 })

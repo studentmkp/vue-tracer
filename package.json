@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "npm --workspace=playground run dev",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "build": "npm --workspaces run build --if-present"
   },
   "devDependencies": {

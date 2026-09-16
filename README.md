@@ -41,7 +41,7 @@ This repo is an npm workspaces monorepo at version `0.0.1`. Packages currently e
 
 - Node.js 18+
 - Vue 3.5+
-- Vite 5+ (playground uses Vite 6+)
+- Vite 5+ (playground uses Vite 8)
 
 ## Quick start (this repo)
 
@@ -53,9 +53,12 @@ npm run dev
 Open the playground, click around, then use the badge in the **bottom-right** to open the overlay.
 
 ```bash
-npm test    # vitest
-npm run build
+npm test           # Vitest runtime/integration tests
+npm run typecheck  # tsc --noEmit over the whole repo
+npm run build      # production build of the playground
 ```
+
+Vitest and the Vite build transpile without full typechecking, so run `tsc` explicitly before shipping.
 
 ## Use in a Vite + Vue app
 

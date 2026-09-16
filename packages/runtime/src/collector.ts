@@ -22,10 +22,10 @@ import { TraceSession, traceSession } from './session-lifecycle'
 
 let eventIdCounter = 1
 
-export function filterTraceEvents(
-  events: (TraceEvent | AggregatedMutationGroup)[],
+export function filterTraceEvents<T extends TraceEvent | AggregatedMutationGroup>(
+  events: T[],
   options: TraceFilterOptions = {}
-): (TraceEvent | AggregatedMutationGroup)[] {
+): T[] {
   return events.filter((event) => {
     // 1. Type filter
     if (options.types && options.types.length > 0) {
