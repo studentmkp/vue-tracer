@@ -20,6 +20,9 @@ function patch(target: any, key: string, replacement: any, applied: PatchedGloba
  * Adopts Promise/timer continuations into the Trace that is active when they are
  * scheduled, so an interaction keeps its causality across `await` and timers.
  *
+ * Adoption and settling are session lifecycle calls (`adoptAsyncTask` /
+ * `settleAsyncTask`); this module only decides which globals to intercept.
+ *
  * Explicit install: importing the runtime leaves the host globals untouched.
  */
 export function installAsyncTracking(): void {
@@ -40,8 +43,7 @@ export function installAsyncTracking(): void {
           return origThen.call(this, onFulfilled, onRejected)
         }
 
-        traceCollector.recordAsyncTask('promise')
-        trace.pendingTasks = (trace.pendingTasks || 0) + 1
+        traceCollector.adoptAsyncTask(trace, 'promise')
 
         const wrappedFulfilled =
           typeof onFulfilled === 'function'
@@ -50,8 +52,7 @@ export function installAsyncTracking(): void {
                   try {
                     return onFulfilled.apply(this, args)
                   } finally {
-                    trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
-                    traceCollector.scheduleCompletion(trace)
+                    traceCollector.settleAsyncTask(trace)
                   }
                 })
               }
@@ -64,8 +65,7 @@ export function installAsyncTracking(): void {
                   try {
                     return onRejected.apply(this, args)
                   } finally {
-                    trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
-                    traceCollector.scheduleCompletion(trace)
+                    traceCollector.settleAsyncTask(trace)
                   }
                 })
               }
@@ -95,16 +95,14 @@ export function installAsyncTracking(): void {
           return origQueueMicrotask(cb)
         }
 
-        traceCollector.recordAsyncTask('microtask')
-        trace.pendingTasks = (trace.pendingTasks || 0) + 1
+        traceCollector.adoptAsyncTask(trace, 'microtask')
 
         return origQueueMicrotask(() => {
           traceCollector.runWithTrace(trace, () => {
             try {
               cb()
             } finally {
-              trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
-              traceCollector.scheduleCompletion(trace)
+              traceCollector.settleAsyncTask(trace)
             }
           })
         })
@@ -132,16 +130,14 @@ export function installAsyncTracking(): void {
           return origRaf(cb)
         }
 
-        traceCollector.recordAsyncTask('raf')
-        trace.pendingTasks = (trace.pendingTasks || 0) + 1
+        traceCollector.adoptAsyncTask(trace, 'raf')
 
         return origRaf((ts: number) => {
           traceCollector.runWithTrace(trace, () => {
             try {
               cb(ts)
             } finally {
-              trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
-              traceCollector.scheduleCompletion(trace)
+              traceCollector.settleAsyncTask(trace)
             }
           })
         })
@@ -170,8 +166,7 @@ export function installAsyncTracking(): void {
           return origSetTimeout(cb, delay, ...args)
         }
 
-        traceCollector.recordAsyncTask('timeout')
-        trace.pendingTasks = (trace.pendingTasks || 0) + 1
+        traceCollector.adoptAsyncTask(trace, 'timeout')
 
         return origSetTimeout(
           (...cbArgs: any[]) => {
@@ -179,8 +174,7 @@ export function installAsyncTracking(): void {
               try {
                 cb(...cbArgs)
               } finally {
-                trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
-                traceCollector.scheduleCompletion(trace)
+                traceCollector.settleAsyncTask(trace)
               }
             })
           },

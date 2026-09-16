@@ -93,7 +93,7 @@ describe('§3 — importing the runtime installs nothing', () => {
 
     // Unpatched timers are invisible to tracing: no async task, no pending work.
     expect(trace.events.some((e) => e.type === 'async')).toBe(false)
-    expect(trace.pendingTasks ?? 0).toBe(0)
+    expect(fresh.traceSession.getPendingTasks(trace)).toBe(0)
     restoreGlobals(pristine)
   })
 

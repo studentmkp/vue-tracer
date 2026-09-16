@@ -1,5 +1,6 @@
 export * from './types'
 export * from './registry'
+export * from './session-lifecycle'
 export * from './collector'
 export * from './query'
 export * from './redact'

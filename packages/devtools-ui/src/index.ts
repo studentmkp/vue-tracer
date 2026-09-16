@@ -1,5 +1,6 @@
 import {
   traceCollector,
+  traceSession,
   queryTraceView,
   findTraceViewItem,
   firstTraceViewItem,
@@ -664,6 +665,7 @@ export function initDevTools() {
   }
 
   function renderTimelineView(trace: Trace, view: TraceViewModel): string {
+    const pendingTasks = traceSession.getPendingTasks(trace)
     const traceStart = trace.startedAt
     const traceEnd = trace.completedAt || trace.startedAt + 50
     const totalDuration = Math.max(traceEnd - traceStart, 20)
@@ -708,8 +710,8 @@ export function initDevTools() {
             <span style="color: #64748b; margin-left: 12px;">Events:</span>
             <strong style="color: #f1f5f9;">${view.filteredEventCount} / ${view.totalEventCount}</strong>
             ${
-              (trace as any).pendingTasks
-                ? `<span class="vrt-pill cyan" style="margin-left: 8px;">Pending Tasks: ${(trace as any).pendingTasks}</span>`
+              pendingTasks
+                ? `<span class="vrt-pill cyan" style="margin-left: 8px;">Pending Tasks: ${pendingTasks}</span>`
                 : ''
             }
           </div>

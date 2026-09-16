@@ -174,7 +174,6 @@ export interface Trace {
   completedAt?: number
   events: TraceEvent[]
   status: 'active' | 'completed'
-  pendingTasks?: number
 }
 
 export type TraceEventType =

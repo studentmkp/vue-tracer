@@ -16,8 +16,8 @@ import type {
   TraceConfidence,
   TraceLevel
 } from './types'
+import { TraceSession, traceSession } from './session-lifecycle'
 
-let traceIdCounter = 1
 let eventIdCounter = 1
 
 export function filterTraceEvents(
@@ -175,12 +175,16 @@ export function aggregateTraceEvents(
 
 class TraceCollector {
   private traces: Trace[] = []
-  private _currentTrace: Trace | null = null
   private _activeMutation: MutationEvent | null = null
   private enabled: boolean = true
   private listeners: Set<(trace: Trace, allTraces: Trace[]) => void> = new Set()
-  private completionTimer: any = null
-  private _isInternalAsync: boolean = false
+  private readonly session: TraceSession
+
+  constructor(session: TraceSession = traceSession) {
+    this.session = session
+    // Lifecycle changes (pending work, completion) are news the UI needs too.
+    this.session.subscribe(() => this.notify())
+  }
 
   public isEnabled(): boolean {
     return this.enabled
@@ -191,29 +195,19 @@ class TraceCollector {
   }
 
   public isInternalAsync(): boolean {
-    return this._isInternalAsync
-  }
-
-  public setInternalAsync(val: boolean) {
-    this._isInternalAsync = val
+    return this.session.isInternalAsync()
   }
 
   public getCurrentTrace(): Trace | null {
-    return this._currentTrace
+    return this.session.current
   }
 
   public setCurrentTrace(trace: Trace | null) {
-    this._currentTrace = trace
+    this.session.setCurrent(trace)
   }
 
   public runWithTrace<T>(trace: Trace, fn: () => T): T {
-    const prevTrace = this._currentTrace
-    this._currentTrace = trace
-    try {
-      return fn()
-    } finally {
-      this._currentTrace = prevTrace
-    }
+    return this.session.runWithTrace(trace, fn)
   }
 
   public getActiveMutation(): MutationEvent | null {
@@ -230,8 +224,8 @@ class TraceCollector {
 
   public clearTraces() {
     this.traces = []
-    this._currentTrace = null
     this._activeMutation = null
+    this.session.clear()
     this.notify()
   }
 
@@ -241,10 +235,11 @@ class TraceCollector {
   }
 
   private notify() {
-    if (this._currentTrace) {
+    const trace = this.session.current
+    if (trace) {
       for (const listener of this.listeners) {
         try {
-          listener(this._currentTrace, this.traces)
+          listener(trace, this.traces)
         } catch (e) {
           console.error('[vue-tracer] Listener error', e)
         }
@@ -253,55 +248,10 @@ class TraceCollector {
   }
 
   public startTrace(trigger: Trace['trigger']): Trace {
-    // If an existing trace was active and has no pending events, complete it
-    if (this._currentTrace && this._currentTrace.status === 'active') {
-      this._currentTrace.status = 'completed'
-      this._currentTrace.completedAt = performance.now()
-    }
-
-    const trace: Trace = {
-      id: traceIdCounter++,
-      trigger,
-      startedAt: performance.now(),
-      events: [],
-      status: 'active'
-    }
-
-    this._currentTrace = trace
+    const trace = this.session.begin(trigger)
     this.traces.push(trace)
-
-    // Schedule trace completion after event loop flushes
-    this.scheduleCompletion(trace)
-
     this.notify()
     return trace
-  }
-
-  public scheduleCompletion(trace: Trace) {
-    if (this.completionTimer) {
-      clearTimeout(this.completionTimer)
-    }
-
-    const pending = (trace as any).pendingTasks || 0
-    const timeoutMs = pending > 0 ? 500 : 150
-
-    this._isInternalAsync = true
-    try {
-      this.completionTimer = setTimeout(() => {
-        if (this._currentTrace && this._currentTrace.id === trace.id) {
-          const currentPending = (this._currentTrace as any).pendingTasks || 0
-          if (currentPending > 0) {
-            this.scheduleCompletion(trace)
-            return
-          }
-          this._currentTrace.status = 'completed'
-          this._currentTrace.completedAt = performance.now()
-          this.notify()
-        }
-      }, timeoutMs)
-    } finally {
-      this._isInternalAsync = false
-    }
   }
 
   public startInteractionTrace(
@@ -360,14 +310,14 @@ class TraceCollector {
     scope?: MutationEvent['scope']
     declaredAt?: SourceLocation
   }): MutationEvent {
-    if (!this._currentTrace || this._currentTrace.status !== 'active') {
+    if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
         event: 'mutation'
       })
     }
 
-    const trace = this._currentTrace!
+    const trace = this.session.current!
     const isExternal = data.isExternal ?? false
     const confidence = data.confidence || (isExternal ? 'inferred' : 'exact')
     const traceLevel = data.traceLevel || (isExternal ? 'partial' : 'full')
@@ -396,13 +346,14 @@ class TraceCollector {
     }
 
     trace.events.push(mutationEvent)
-    this.scheduleCompletion(trace)
+    this.session.arm(trace)
     this.notify()
     return mutationEvent
   }
 
   public recordComponentTrigger(componentName: string, file?: string): ComponentTriggerEvent | null {
-    if (!this._currentTrace) return null
+    const trace = this.session.current
+    if (!trace) return null
 
     const triggeredByMutationId = this._activeMutation?.id
 
@@ -413,7 +364,7 @@ class TraceCollector {
 
     const triggerEvent: ComponentTriggerEvent = {
       id: eventIdCounter++,
-      traceId: this._currentTrace.id,
+      traceId: trace.id,
       type: 'component-trigger',
       componentName,
       file,
@@ -422,8 +373,8 @@ class TraceCollector {
       confidence: 'runtime'
     }
 
-    this._currentTrace.events.push(triggerEvent)
-    this.scheduleCompletion(this._currentTrace)
+    trace.events.push(triggerEvent)
+    this.session.arm(trace)
     this.notify()
     return triggerEvent
   }
@@ -434,11 +385,12 @@ class TraceCollector {
     end: number,
     file?: string
   ): ComponentRenderEvent | null {
-    if (!this._currentTrace) return null
+    const trace = this.session.current
+    if (!trace) return null
 
     const renderEvent: ComponentRenderEvent = {
       id: eventIdCounter++,
-      traceId: this._currentTrace.id,
+      traceId: trace.id,
       type: 'component-render',
       componentName,
       file,
@@ -449,8 +401,8 @@ class TraceCollector {
       confidence: 'runtime'
     }
 
-    this._currentTrace.events.push(renderEvent)
-    this.scheduleCompletion(this._currentTrace)
+    trace.events.push(renderEvent)
+    this.session.arm(trace)
     this.notify()
     return renderEvent
   }
@@ -460,14 +412,14 @@ class TraceCollector {
     source?: SourceLocation
     target?: any
   }): ComputedEvent | null {
-    if (!this._currentTrace || this._currentTrace.status !== 'active') {
+    if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
         event: 'computed'
       })
     }
 
-    const trace = this._currentTrace!
+    const trace = this.session.current!
     const triggeredByMutationId = this._activeMutation?.id
 
     const computedEvent: ComputedEvent = {
@@ -482,24 +434,53 @@ class TraceCollector {
     }
 
     trace.events.push(computedEvent)
-    this.scheduleCompletion(trace)
+    this.session.arm(trace)
     this.notify()
     return computedEvent
   }
 
   public recordAsyncTask(taskType: AsyncTaskType, name?: string): AsyncTaskEvent | null {
-    if (!this._currentTrace || this._currentTrace.status !== 'active') return null
+    const trace = this.session.current
+    if (!trace) return null
+    return this.recordAsyncEventOn(trace, taskType, name)
+  }
+
+  /**
+   * Adopts an in-flight continuation into `trace`: records its async event and marks
+   * it pending with the session. `settleAsyncTask` closes it out.
+   */
+  public adoptAsyncTask(
+    trace: Trace,
+    taskType: AsyncTaskType,
+    name?: string
+  ): AsyncTaskEvent | null {
+    const asyncEvent = this.recordAsyncEventOn(trace, taskType, name)
+    if (asyncEvent) this.session.adopt(trace)
+    return asyncEvent
+  }
+
+  /** Settles a continuation adopted by `adoptAsyncTask`, re-arming completion. */
+  public settleAsyncTask(trace: Trace): void {
+    this.session.settle(trace)
+  }
+
+  private recordAsyncEventOn(
+    trace: Trace,
+    taskType: AsyncTaskType,
+    name?: string
+  ): AsyncTaskEvent | null {
+    if (trace.status !== 'active') return null
 
     const asyncEvent: AsyncTaskEvent = {
       id: eventIdCounter++,
-      traceId: this._currentTrace.id,
+      traceId: trace.id,
       type: 'async',
       taskType,
       name,
       timestamp: performance.now()
     }
 
-    this._currentTrace.events.push(asyncEvent)
+    trace.events.push(asyncEvent)
     return asyncEvent
   }
 
@@ -507,14 +488,14 @@ class TraceCollector {
     name?: string
     source?: SourceLocation
   }): WatchEvent | null {
-    if (!this._currentTrace || this._currentTrace.status !== 'active') {
+    if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
         event: 'watch'
       })
     }
 
-    const trace = this._currentTrace!
+    const trace = this.session.current!
     const triggeredByMutationId = this._activeMutation?.id
 
     const watchEvent: WatchEvent = {
@@ -528,7 +509,7 @@ class TraceCollector {
     }
 
     trace.events.push(watchEvent)
-    this.scheduleCompletion(trace)
+    this.session.arm(trace)
     this.notify()
     return watchEvent
   }
@@ -548,7 +529,7 @@ class TraceCollector {
   public exportTrace(traceId?: number): TraceExportData {
     const targetTrace = traceId
       ? this.traces.find((t) => t.id === traceId)
-      : this._currentTrace || this.traces[this.traces.length - 1]
+      : this.session.current || this.traces[this.traces.length - 1]
     const list = targetTrace ? [targetTrace] : []
     return this.createExportData(list)
   }
@@ -571,7 +552,7 @@ class TraceCollector {
         }
       }
       if (parsed.traces.length > 0) {
-        this._currentTrace = this.traces[this.traces.length - 1]
+        this.session.setCurrent(this.traces[this.traces.length - 1])
       }
       this.notify()
     }
