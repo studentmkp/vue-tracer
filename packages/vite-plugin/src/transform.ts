@@ -94,7 +94,7 @@ export function transformCode(
   return null
 }
 
-const RUNTIME_IMPORTS = `import { __trace_register, __trace_register_external, __trace_register_computed, __trace_set, __trace_update, __trace_call, __trace_delete, __trace_watch_cb, __trace_configure } from '@vue-reactive-trace/runtime';\n`
+const RUNTIME_IMPORTS = `import { __trace_register, __trace_register_computed, __trace_set, __trace_update, __trace_call, __trace_delete, __trace_watch_cb, __trace_configure } from '@vue-reactive-trace/runtime';\n`
 
 function serializeRedactMatcher(
   matcher: string | ((value: unknown, ctx: RedactContext) => unknown)

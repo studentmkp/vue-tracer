@@ -8,7 +8,6 @@ import {
   filterTraceEvents,
   registerExternalReactive,
   __trace_register,
-  __trace_register_external,
   __trace_register_computed,
   __trace_set,
   __trace_update,
@@ -48,6 +47,7 @@ function add() {
 
       // Check declaration registration
       expect(code).toContain('__trace_register(ref(0)')
+      expect(code).not.toContain('__trace_register_external')
       expect(code).toContain("name: 'count'")
       expect(code).toContain("type: 'ref'")
       expect(code).toContain("file: 'App.vue'")
