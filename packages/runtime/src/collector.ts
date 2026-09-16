@@ -27,7 +27,9 @@ export function filterTraceEvents(
   return events.filter((event) => {
     // 1. Type filter
     if (options.types && options.types.length > 0) {
-      if (!options.types.includes(event.type)) {
+      const typeAliases =
+        event.type === 'aggregated-mutation' ? ['aggregated-mutation', 'mutation'] : [event.type]
+      if (!options.types.some((t) => typeAliases.includes(t))) {
         return false
       }
     }
@@ -540,8 +542,7 @@ class TraceCollector {
     options: TraceFilterOptions = {},
     threshold: number = 3
   ): (TraceEvent | AggregatedMutationGroup)[] {
-    const aggregated = this.getAggregatedEvents(trace, threshold)
-    return filterTraceEvents(aggregated, options)
+    return aggregateTraceEvents(filterTraceEvents(trace.events, options), threshold)
   }
 
   public exportTrace(traceId?: number): TraceExportData {

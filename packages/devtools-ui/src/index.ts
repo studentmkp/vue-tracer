@@ -1,17 +1,20 @@
 import {
   traceCollector,
-  aggregateTraceEvents,
-  filterTraceEvents,
+  queryTraceView,
+  findTraceViewItem,
+  firstTraceViewItem,
   type Trace,
   type TraceEvent,
   type MutationEvent,
   type ComputedEvent,
   type ComponentRenderEvent,
+  type ComponentTriggerEvent,
   type InteractionEvent,
   type AsyncTaskEvent,
   type WatchEvent,
   type AggregatedMutationGroup,
-  type TraceFilterOptions
+  type TraceFilterOptions,
+  type TraceViewModel
 } from '@vue-reactive-trace/runtime'
 
 function renderScopeBadge(scope?: MutationEvent['scope']): string {
@@ -393,6 +396,10 @@ export function initDevTools() {
       background: #059669;
       color: #ffffff;
     }
+    .vrt-event-bar.trigger {
+      background: #0d9488;
+      color: #ffffff;
+    }
     .vrt-detail-panel {
       height: 195px;
       border-top: 1px solid #1e293b;
@@ -445,6 +452,7 @@ export function initDevTools() {
     .vrt-pill.cyan { background: rgba(8, 145, 178, 0.2); color: #22d3ee; }
     .vrt-pill.yellow { background: rgba(234, 179, 8, 0.2); color: #facc15; }
     .vrt-pill.red { background: rgba(244, 63, 94, 0.2); color: #fb7185; }
+    .vrt-pill.teal { background: rgba(20, 184, 166, 0.2); color: #2dd4bf; }
     .vrt-pill.gray { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
     .vrt-empty {
       color: #64748b;
@@ -470,6 +478,7 @@ export function initDevTools() {
     .vrt-step.computed { border-left-color: #f59e0b; }
     .vrt-step.watch { border-left-color: #eab308; }
     .vrt-step.render { border-left-color: #10b981; }
+    .vrt-step.trigger { border-left-color: #14b8a6; }
     .vrt-step-badge {
       font-size: 10px;
       font-weight: 700;
@@ -483,6 +492,7 @@ export function initDevTools() {
     .vrt-step.computed .vrt-step-badge { color: #fbbf24; }
     .vrt-step.watch .vrt-step-badge { color: #facc15; }
     .vrt-step.render .vrt-step-badge { color: #34d399; }
+    .vrt-step.trigger .vrt-step-badge { color: #2dd4bf; }
     .vrt-step-title {
       font-weight: 600;
       font-size: 12px;
@@ -545,6 +555,8 @@ export function initDevTools() {
       selectedTraceId = activeTrace.id
     }
 
+    const view = activeTrace ? queryTraceView(activeTrace, getActiveFilterOptions()) : null
+
     container.innerHTML = `
       <div class="vrt-badge" id="vrt-toggle">
         <span class="vrt-pulse" style="background: ${traceCollector.isEnabled() ? '#10b981' : '#f43f5e'}"></span>
@@ -588,6 +600,7 @@ export function initDevTools() {
               <option value="computed" ${filterType === 'computed' ? 'selected' : ''}>Computed</option>
               <option value="watch" ${filterType === 'watch' ? 'selected' : ''}>Watch</option>
               <option value="component-render" ${filterType === 'component-render' ? 'selected' : ''}>Renders</option>
+              <option value="component-trigger" ${filterType === 'component-trigger' ? 'selected' : ''}>Triggers</option>
               <option value="async" ${filterType === 'async' ? 'selected' : ''}>Async</option>
             </select>
             <label class="vrt-filter-label" title="Section 42 Noise Reduction: Hide library internals and external events">
@@ -625,11 +638,11 @@ export function initDevTools() {
             </div>
             <div class="vrt-main-view">
               ${
-                !activeTrace
+                !activeTrace || !view
                   ? '<div class="vrt-empty">Interact with the page to start a reactive trace</div>'
                   : activeTab === 'timeline'
-                  ? renderTimelineView(activeTrace)
-                  : renderFlowView(activeTrace)
+                  ? renderTimelineView(activeTrace, view)
+                  : renderFlowView(activeTrace, view)
               }
             </div>
           </div>
@@ -650,40 +663,27 @@ export function initDevTools() {
     }
   }
 
-  function renderTimelineView(trace: Trace): string {
+  function renderTimelineView(trace: Trace, view: TraceViewModel): string {
     const traceStart = trace.startedAt
     const traceEnd = trace.completedAt || trace.startedAt + 50
     const totalDuration = Math.max(traceEnd - traceStart, 20)
 
-    const filterOpts = getActiveFilterOptions()
-    const aggregatedAll = aggregateTraceEvents(trace.events, 3)
-    const filteredAggregated = filterTraceEvents(aggregatedAll, filterOpts)
-    const filteredRaw = filterTraceEvents(trace.events, filterOpts)
-
-    const interactions = filteredRaw.filter((e): e is InteractionEvent => e.type === 'interaction')
-    const asyncTasks = filteredRaw.filter((e): e is AsyncTaskEvent => e.type === 'async')
-    const mutationItems = filteredAggregated.filter(
-      (it): it is MutationEvent | AggregatedMutationGroup =>
-        it.type === 'mutation' || it.type === 'aggregated-mutation'
-    )
-    const computeds = filteredRaw.filter((e): e is ComputedEvent => e.type === 'computed')
-    const watches = filteredRaw.filter((e): e is WatchEvent => e.type === 'watch')
-    const renders = filteredRaw.filter((e): e is ComponentRenderEvent => e.type === 'component-render')
+    const {
+      interactions,
+      asyncTasks,
+      mutations: mutationItems,
+      computeds,
+      watches,
+      triggers,
+      renders
+    } = view.tracks
 
     let selectedEvent: TraceEvent | AggregatedMutationGroup | undefined
     if (selectedEventId) {
-      selectedEvent =
-        (mutationItems.find((it) => it.id === selectedEventId) as any) ||
-        filteredRaw.find((e) => e.id === selectedEventId)
+      selectedEvent = findTraceViewItem(view, selectedEventId)
     }
     if (!selectedEvent) {
-      selectedEvent =
-        mutationItems[0] ||
-        interactions[0] ||
-        asyncTasks[0] ||
-        computeds[0] ||
-        watches[0] ||
-        renders[0]
+      selectedEvent = firstTraceViewItem(view)
       if (selectedEvent) selectedEventId = selectedEvent.id
     }
 
@@ -706,7 +706,7 @@ export function initDevTools() {
             <span style="color: #64748b;">Duration:</span>
             <strong style="color: #f1f5f9;">${totalDuration.toFixed(2)} ms</strong>
             <span style="color: #64748b; margin-left: 12px;">Events:</span>
-            <strong style="color: #f1f5f9;">${filteredRaw.length} / ${trace.events.length}</strong>
+            <strong style="color: #f1f5f9;">${view.filteredEventCount} / ${view.totalEventCount}</strong>
             ${
               (trace as any).pendingTasks
                 ? `<span class="vrt-pill cyan" style="margin-left: 8px;">Pending Tasks: ${(trace as any).pendingTasks}</span>`
@@ -874,8 +874,32 @@ export function initDevTools() {
                 : ''
             }
 
+            <div class="vrt-track" data-track="component-trigger">
+              <div class="vrt-track-header">
+                <span class="vrt-pill teal" style="font-size: 9px;">TRIGGER</span> Vue Triggers
+              </div>
+              <div class="vrt-track-lane">
+                ${triggers
+                  .map((evt) => {
+                    const left = getLeftPx(evt.timestamp)
+                    const width = getWidthPx(14)
+                    const isSel = evt.id === selectedEventId
+                    return `
+                      <div class="vrt-event-bar trigger ${isSel ? 'selected' : ''}"
+                           data-event-id="${evt.id}"
+                           data-event-type="component-trigger"
+                           style="left: ${left}px; width: ${width}px;"
+                           title="${evt.componentName} trigger">
+                        ${evt.componentName}
+                      </div>
+                    `
+                  })
+                  .join('')}
+              </div>
+            </div>
+
             <!-- Track 6: Component Render -->
-            <div class="vrt-track">
+            <div class="vrt-track" data-track="component-render">
               <div class="vrt-track-header">
                 <span class="vrt-pill emerald" style="font-size: 9px;">RENDER</span> Vue Updates
               </div>
@@ -1147,6 +1171,51 @@ export function initDevTools() {
       `
     }
 
+    if (event.type === 'component-trigger') {
+      const t = event as ComponentTriggerEvent
+      return `
+        <div class="vrt-detail-title">
+          <span class="vrt-pill teal">COMPONENT TRIGGER</span>
+          <span>${t.componentName}</span>
+          <span style="color: #64748b; font-weight: normal; margin-left: auto;">ID: #${t.id}</span>
+        </div>
+        <div class="vrt-detail-grid">
+          <div class="vrt-detail-item">
+            <span class="vrt-detail-label">Component</span>
+            <span class="vrt-detail-val" style="color: #2dd4bf; font-weight: 600;">${t.componentName}</span>
+          </div>
+          <div class="vrt-detail-item">
+            <span class="vrt-detail-label">Triggered At</span>
+            <span class="vrt-detail-val">${t.timestamp.toFixed(2)} ms</span>
+          </div>
+          ${
+            t.file
+              ? `
+            <div class="vrt-detail-item">
+              <span class="vrt-detail-label">Component File (Click to open)</span>
+              <span class="vrt-detail-val">
+                <span class="vrt-loc clickable" data-file="${t.file}" data-line="1" data-column="1" title="Click to open in editor">
+                  ${t.file} ↗
+                </span>
+              </span>
+            </div>
+          `
+              : ''
+          }
+          <div class="vrt-detail-item">
+            <span class="vrt-detail-label">Caused by Mutation</span>
+            <span class="vrt-detail-val">${t.triggeredByMutationId ? `#${t.triggeredByMutationId}` : 'Initial / Reaction'}</span>
+          </div>
+          <div class="vrt-detail-item">
+            <span class="vrt-detail-label">Confidence</span>
+            <span class="vrt-detail-val" style="color: #34d399; font-weight: 700;">
+              ${(t.confidence || 'runtime').toUpperCase()}
+            </span>
+          </div>
+        </div>
+      `
+    }
+
     if (event.type === 'component-render') {
       const r = event as ComponentRenderEvent
       return `
@@ -1224,20 +1293,8 @@ export function initDevTools() {
     return ''
   }
 
-  function renderFlowView(trace: Trace): string {
-    const filterOpts = getActiveFilterOptions()
-    const aggregatedAll = aggregateTraceEvents(trace.events, 3)
-    const filteredAggregated = filterTraceEvents(aggregatedAll, filterOpts)
-    const filteredRaw = filterTraceEvents(trace.events, filterOpts)
-
-    const asyncTasks = filteredRaw.filter((e): e is AsyncTaskEvent => e.type === 'async')
-    const mutationItems = filteredAggregated.filter(
-      (it): it is MutationEvent | AggregatedMutationGroup =>
-        it.type === 'mutation' || it.type === 'aggregated-mutation'
-    )
-    const watches = filteredRaw.filter((e): e is WatchEvent => e.type === 'watch')
-    const computeds = filteredRaw.filter((e): e is ComputedEvent => e.type === 'computed')
-    const renders = filteredRaw.filter((e): e is ComponentRenderEvent => e.type === 'component-render')
+  function renderFlowView(trace: Trace, view: TraceViewModel): string {
+    const { asyncTasks, mutations: mutationItems, watches, computeds, triggers, renders } = view.tracks
 
     return `
       <div class="vrt-flow">
@@ -1374,6 +1431,29 @@ export function initDevTools() {
               <div class="vrt-step-detail">
                 Status: ${c.status} at ${c.timestamp.toFixed(2)} ms
                 ${c.source ? `<br/>Declared: <span class="vrt-loc clickable" data-file="${c.source.file}" data-line="${c.source.line}">${c.source.file}:${c.source.line} ↗</span>` : ''}
+              </div>
+            </div>
+          `
+            )
+            .join('<div class="vrt-arrow">↓</div>')}
+        `
+            : ''
+        }
+
+        ${
+          triggers.length > 0
+            ? `
+          <div class="vrt-arrow">↓</div>
+          ${triggers
+            .map(
+              (t) => `
+            <div class="vrt-step trigger" data-event-type="component-trigger">
+              <div class="vrt-step-badge">Component Trigger</div>
+              <div class="vrt-step-title">${t.componentName}</div>
+              <div class="vrt-step-detail">
+                Triggered at ${t.timestamp.toFixed(2)} ms
+                ${t.triggeredByMutationId ? `<br/>Caused by mutation #${t.triggeredByMutationId}` : ''}
+                ${t.file ? `<br/>File: <span class="vrt-loc clickable" data-file="${t.file}" data-line="1" data-column="1">${t.file} ↗</span>` : ''}
               </div>
             </div>
           `
