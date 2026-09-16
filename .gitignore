@@ -1,0 +1,46 @@
+# Dependencies (root, playground, nested package installs)
+node_modules/
+
+# Vite / Vitest caches
+.vite/
+*.local
+playground/dist/
+
+# TypeScript / build output (packages currently ship src; keep dist out if added later)
+dist/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Trace JSON exports from the playground panel
+vue-trace-*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

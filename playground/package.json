@@ -1,0 +1,21 @@
+{
+  "name": "playground",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@vue-reactive-trace/devtools-ui": "*",
+    "@vue-reactive-trace/runtime": "*",
+    "@vue-reactive-trace/vue-adapter": "*",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "@vue-reactive-trace/vite": "*",
+    "vite": ">=6.0.0"
+  }
+}

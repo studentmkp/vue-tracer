@@ -1,0 +1,28 @@
+{
+  "name": "vue-reactive-trace-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "playground"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=playground run dev",
+    "test": "vitest run",
+    "build": "npm --workspaces run build --if-present"
+  },
+  "devDependencies": {
+    "@babel/parser": "^8.0.5",
+    "@babel/traverse": "^8.0.5",
+    "@types/node": "^26.6.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "estree-walker": "^3.0.3",
+    "happy-dom": "^20.14.5",
+    "magic-string": "^1.4.1",
+    "pinia": "^4.0.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1",
+    "vue": "^3.5.42"
+  }
+}
