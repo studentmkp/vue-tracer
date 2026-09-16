@@ -15,7 +15,8 @@ import type {
   TraceExportData,
   TraceConfidence,
   TraceLevel,
-  ComponentEventOptions
+  ComponentEventOptions,
+  TraceEventType
 } from './types'
 import { TraceSession, traceSession } from './session-lifecycle'
 
@@ -181,6 +182,8 @@ class TraceCollector {
   private enabled: boolean = true
   private listeners: Set<(trace: Trace, allTraces: Trace[]) => void> = new Set()
   private mutationIndex = new Map<number, MutationEvent>()
+  /** `null` means retain every top-level event type; an empty set retains none. */
+  private recordingEventTypes: Set<TraceEventType> | null = null
   private readonly session: TraceSession
 
   constructor(session: TraceSession = traceSession) {
@@ -195,6 +198,18 @@ class TraceCollector {
 
   public setEnabled(val: boolean) {
     this.enabled = val
+  }
+
+  /**
+   * Configures the recording allow-list at the collector seam.
+   *
+   * `undefined` means retain all recorded event types, while an empty array
+   * intentionally retains none. The input is copied so later mutations by a
+   * plugin caller cannot change an active recording policy.
+   */
+  public configureRecording(options: { events?: readonly TraceEventType[] } = {}): void {
+    this.recordingEventTypes =
+      options.events === undefined ? null : new Set<TraceEventType>(options.events)
   }
 
   public isInternalAsync(): boolean {
@@ -227,11 +242,36 @@ class TraceCollector {
    * window is only the fallback for callers that do not resolve causality.
    */
   private resolveCause(options?: ComponentEventOptions): MutationEvent | null {
+    const trace = this.session.current
+    if (!trace) return null
+
+    let cause: MutationEvent | null
     if (options && 'triggeredByMutationId' in options) {
       const id = options.triggeredByMutationId
-      return id == null ? null : this.mutationIndex.get(id) ?? null
+      cause = id == null ? null : this.mutationIndex.get(id) ?? null
+    } else {
+      cause = this._activeMutation
     }
-    return this._activeMutation
+
+    // A dropped mutation is deliberately absent from the index. Dependent events
+    // may still be retained, but they are de-linked rather than pointing at a
+    // missing mutation. The index is shared by all traces, so never carry a cause
+    // across traces: every retained causal id must resolve inside its own Trace.
+    return cause && cause.traceId === trace.id ? cause : null
+  }
+
+  /**
+   * The sole retention seam for Trace events. Callers still perform their
+   * normal lifecycle/bookkeeping work when this returns null; only storage is
+   * governed by the allow-list.
+   */
+  private retainEvent<T extends TraceEvent>(trace: Trace, event: T): T | null {
+    if (this.recordingEventTypes && !this.recordingEventTypes.has(event.type)) {
+      return null
+    }
+
+    trace.events.push(event)
+    return event
   }
 
   public getTraces(): Trace[] {
@@ -305,7 +345,7 @@ class TraceCollector {
       timestamp: performance.now()
     }
 
-    trace.events.push(interactionEvent)
+    this.retainEvent(trace, interactionEvent)
     this.notify()
     return trace
   }
@@ -327,7 +367,7 @@ class TraceCollector {
     confidence?: TraceConfidence
     scope?: MutationEvent['scope']
     declaredAt?: SourceLocation
-  }): MutationEvent {
+  }): MutationEvent | null {
     if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
@@ -364,11 +404,13 @@ class TraceCollector {
       declaredAt: data.declaredAt
     }
 
-    trace.events.push(mutationEvent)
-    this.mutationIndex.set(mutationEvent.id, mutationEvent)
+    const retained = this.retainEvent(trace, mutationEvent)
+    if (retained) {
+      this.mutationIndex.set(retained.id, retained)
+    }
     this.session.arm(trace)
     this.notify()
-    return mutationEvent
+    return retained
   }
 
   public recordComponentTrigger(
@@ -397,10 +439,10 @@ class TraceCollector {
       confidence: 'runtime'
     }
 
-    trace.events.push(triggerEvent)
+    const retained = this.retainEvent(trace, triggerEvent)
     this.session.arm(trace)
     this.notify()
-    return triggerEvent
+    return retained
   }
 
   public recordComponentRender(
@@ -426,10 +468,10 @@ class TraceCollector {
       confidence: 'runtime'
     }
 
-    trace.events.push(renderEvent)
+    const retained = this.retainEvent(trace, renderEvent)
     this.session.arm(trace)
     this.notify()
-    return renderEvent
+    return retained
   }
 
   public recordComputedInvalidated(data: {
@@ -445,7 +487,7 @@ class TraceCollector {
     }
 
     const trace = this.session.current!
-    const triggeredByMutationId = this._activeMutation?.id
+    const triggeredByMutationId = this.resolveCause()?.id
 
     const computedEvent: ComputedEvent = {
       id: eventIdCounter++,
@@ -458,10 +500,10 @@ class TraceCollector {
       timestamp: performance.now()
     }
 
-    trace.events.push(computedEvent)
+    const retained = this.retainEvent(trace, computedEvent)
     this.session.arm(trace)
     this.notify()
-    return computedEvent
+    return retained
   }
 
   public recordAsyncTask(taskType: AsyncTaskType, name?: string): AsyncTaskEvent | null {
@@ -480,7 +522,9 @@ class TraceCollector {
     name?: string
   ): AsyncTaskEvent | null {
     const asyncEvent = this.recordAsyncEventOn(trace, taskType, name)
-    if (asyncEvent) this.session.adopt(trace)
+    // Adoption is lifecycle bookkeeping, not event storage. It must still
+    // happen when `async` is excluded so later work stays on this Trace.
+    if (trace.status === 'active') this.session.adopt(trace)
     return asyncEvent
   }
 
@@ -505,8 +549,7 @@ class TraceCollector {
       timestamp: performance.now()
     }
 
-    trace.events.push(asyncEvent)
-    return asyncEvent
+    return this.retainEvent(trace, asyncEvent)
   }
 
   public recordWatchExecuted(data: {
@@ -521,7 +564,7 @@ class TraceCollector {
     }
 
     const trace = this.session.current!
-    const triggeredByMutationId = this._activeMutation?.id
+    const triggeredByMutationId = this.resolveCause()?.id
 
     const watchEvent: WatchEvent = {
       id: eventIdCounter++,
@@ -533,10 +576,10 @@ class TraceCollector {
       timestamp: performance.now()
     }
 
-    trace.events.push(watchEvent)
+    const retained = this.retainEvent(trace, watchEvent)
     this.session.arm(trace)
     this.notify()
-    return watchEvent
+    return retained
   }
 
   public getAggregatedEvents(trace: Trace, threshold: number = 3): (TraceEvent | AggregatedMutationGroup)[] {

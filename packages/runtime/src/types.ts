@@ -191,17 +191,8 @@ export interface Trace {
   status: 'active' | 'completed'
 }
 
-export type TraceEventType =
-  | 'interaction'
-  | 'function'
-  | 'mutation'
-  | 'computed'
-  | 'watch'
-  | 'component-trigger'
-  | 'component-render'
-  | 'vue-flush'
-  | 'microtask'
-  | 'async'
+/** Top-level event types that can actually be retained in `Trace.events`. */
+export type TraceEventType = TraceEvent['type']
 
 export interface TraceFilterOptions {
   types?: string[]
@@ -225,4 +216,3 @@ export interface TraceExportData {
   }
   traces: Trace[]
 }
-

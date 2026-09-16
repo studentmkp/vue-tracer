@@ -8,11 +8,12 @@ import MagicString from 'magic-string'
 // Handle CJS/ESM interop for @babel/traverse
 const traverse = (traverseDefault as any).default || traverseDefault
 
-import type { RedactContext } from '@vue-reactive-trace/runtime'
+import type { RedactContext, TraceEventType } from '@vue-reactive-trace/runtime'
 
 export interface TransformOptions {
   root?: string
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
+  events?: TraceEventType[]
 }
 
 const SOURCE_EXT_RE = /\.(vue|ts|js|tsx|jsx|mts|mjs)$/
@@ -109,17 +110,24 @@ function serializeRedactMatcher(
 }
 
 export function buildConfigureCall(options: TransformOptions): string {
-  if (options.redact === undefined) return ''
+  const calls: string[] = []
 
-  const items = options.redact.map(serializeRedactMatcher)
-  return `__trace_configure({ redact: [${items.join(', ')}] });\n`
+  if (options.events !== undefined) {
+    calls.push(`traceCollector.configureRecording({ events: ${JSON.stringify(options.events)} });`)
+  }
+
+  if (options.redact !== undefined) {
+    const items = options.redact.map(serializeRedactMatcher)
+    calls.push(`__trace_configure({ redact: [${items.join(', ')}] });`)
+  }
+
+  return calls.length > 0 ? `${calls.join('\n')}\n` : ''
 }
 
 function runtimePreamble(options: TransformOptions): string {
-  const imports =
-    options.redact === undefined
-      ? RUNTIME_HELPER_IMPORTS
-      : [...RUNTIME_HELPER_IMPORTS, '__trace_configure']
+  const imports = [...RUNTIME_HELPER_IMPORTS]
+  if (options.events !== undefined) imports.push('traceCollector')
+  if (options.redact !== undefined) imports.push('__trace_configure')
   return `import { ${imports.join(', ')} } from '@vue-reactive-trace/runtime';\n${buildConfigureCall(options)}`
 }
 

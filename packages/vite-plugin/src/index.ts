@@ -2,12 +2,13 @@ import type { Plugin, PluginOption } from 'vite'
 import { resolve, isAbsolute } from 'path'
 import { spawn } from 'child_process'
 import { transformCode } from './transform.ts'
-import type { RedactContext } from '@vue-reactive-trace/runtime'
+import type { RedactContext, TraceEventType } from '@vue-reactive-trace/runtime'
 
 export interface ReactiveTracePluginOptions {
   enabled?: boolean
   editor?: 'vscode' | 'cursor' | 'webstorm' | string
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
+  events?: TraceEventType[]
 }
 
 export function openInEditor(
@@ -169,7 +170,8 @@ export default function reactiveTrace(options: ReactiveTracePluginOptions = {}):
 
       return transformCode(code, id, {
         root,
-        redact: options.redact
+        redact: options.redact,
+        events: options.events
       })
     }
   }

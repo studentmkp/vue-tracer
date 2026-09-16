@@ -20,11 +20,10 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const FIXTURE = 'tests/plugin-options.types.ts'
 
-/** Options removed because recording never honoured them (issue #6). */
+/** Options removed because the transform still does not honour them (issue #6). */
 const REMOVED_OPTIONS = [
   'include',
   'exclude',
-  'events',
   'async',
   'computed',
   'watch',
@@ -71,6 +70,7 @@ describe('§44 — Vite plugin option surface', () => {
         `@ts-expect-error ${option}:`
       )
     }
+    expect(source).toContain('@ts-expect-error events: only recorded top-level event types')
 
     const output = typecheckFixture()
     const fixtureDiagnostics = output

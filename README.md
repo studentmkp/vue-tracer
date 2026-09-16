@@ -74,6 +74,7 @@ export default defineConfig({
     reactiveTrace({
       editor: 'cursor', // 'vscode' | 'cursor' | 'webstorm' | custom binary
       // redact: ['**.ssn'],
+      // events: ['mutation', 'component-render'], // only retain these event types
       // enabled: true, // also instrument `vite build`
     }),
     vue(),
@@ -180,6 +181,19 @@ The overlay is a fixed panel (not a browser-extension DevTools tab).
 | `enabled` | `false` for `vite build` | Dev server always instruments. Set `true` to instrument production builds. |
 | `editor` | `EDITOR` / `VISUAL`, else VS Code | Used by the open-source middleware |
 | `redact` | built-in sensitive keys | Extra glob strings (`'**.ssn'`) or `(value, ctx) => unknown` functions |
+| `events` | all recorded event types | Recording allow-list; valid values are `interaction`, `mutation`, `computed`, `watch`, `component-trigger`, `component-render`, and `async` |
+
+`events` is applied while recording, before an event enters `Trace.events`. Leaving it
+undefined retains every recorded event; `events: []` retains none. The trace trigger
+(including an interaction's event and target metadata, or a manual trigger) is kept
+regardless of this list. The overlay and JSON export read the same retained
+`Trace.events`; their interactive filters only change the current view.
+
+If a dependent event is allowed but the mutation that would have caused it is not,
+the dependent event is still retained without `triggeredByMutationId`. The collector
+never secretly retains the dropped mutation or emits a dangling causal id. Async
+subtypes such as `microtask` are values of an `async` event's `taskType`, not values
+for the top-level `events` option.
 
 The transform instruments supported syntax in app source (not `node_modules`, not this repo’s `packages/*/src`).
 
