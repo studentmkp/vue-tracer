@@ -21,15 +21,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const FIXTURE = 'tests/plugin-options.types.ts'
 
 /** Options removed because the transform still does not honour them (issue #6). */
-const REMOVED_OPTIONS = [
-  'include',
-  'exclude',
-  'async',
-  'computed',
-  'watch',
-  'pinia',
-  'maxMemoryMB'
-] as const
+const REMOVED_OPTIONS = ['include', 'exclude', 'async', 'computed', 'watch', 'pinia'] as const
 
 const require = createRequire(import.meta.url)
 const tscBin = join(dirname(require.resolve('typescript/package.json')), 'bin', 'tsc')

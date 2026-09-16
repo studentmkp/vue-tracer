@@ -17,7 +17,8 @@ const valid: ReactiveTracePluginOptions = {
   enabled: true,
   editor: 'cursor',
   redact: ['**.ssn', (value, ctx) => (ctx.key === 'ssn' ? '[SSN]' : value)],
-  events: ['mutation', 'component-render']
+  events: ['mutation', 'component-render'],
+  maxMemoryMB: 25
 }
 void valid
 
@@ -35,7 +36,16 @@ const withComputed: ReactiveTracePluginOptions = { computed: false }
 const withWatch: ReactiveTracePluginOptions = { watch: false }
 // @ts-expect-error pinia: Pinia stores are registered by the Vue adapter
 const withPinia: ReactiveTracePluginOptions = { pinia: false }
-// @ts-expect-error maxMemoryMB: no retention policy is implemented
-const withMemory: ReactiveTracePluginOptions = { maxMemoryMB: 50 }
+// @ts-expect-error maxMemoryMB: the retention budget is a number of MiB
+const withStringMemory: ReactiveTracePluginOptions = { maxMemoryMB: '50' }
 
-void [withInclude, withExclude, withInvalidEvent, withAsync, withComputed, withWatch, withPinia, withMemory]
+void [
+  withInclude,
+  withExclude,
+  withInvalidEvent,
+  withAsync,
+  withComputed,
+  withWatch,
+  withPinia,
+  withStringMemory
+]

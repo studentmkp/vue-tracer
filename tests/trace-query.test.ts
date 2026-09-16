@@ -23,7 +23,7 @@ describe('Trace query view-model', () => {
   })
 
   it('puts component-trigger on its own track and keeps mutation aggregation', () => {
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'query-test' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'query-test' })!
     for (let i = 0; i < 5; i++) {
       traceCollector.recordMutation({
         name: 'items',
@@ -47,7 +47,7 @@ describe('Trace query view-model', () => {
   })
 
   it('type filter mutation still yields aggregated mutation groups', () => {
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'filter-agg' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'filter-agg' })!
     for (let i = 0; i < 4; i++) {
       traceCollector.recordMutation({
         name: 'n',
@@ -67,7 +67,7 @@ describe('Trace query view-model', () => {
   })
 
   it('type filter component-trigger hides mutations', () => {
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'filter-trigger' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'filter-trigger' })!
     traceCollector.recordMutation({
       name: 'n',
       operation: 'set',
@@ -83,7 +83,7 @@ describe('Trace query view-model', () => {
   })
 
   it('query matches component-trigger by component name and file', () => {
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'query-name' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'query-name' })!
     traceCollector.recordComponentTrigger('CartBadge', 'src/CartBadge.vue')
     traceCollector.recordComponentTrigger('ThemeToggle', 'src/ThemeToggle.vue')
 
@@ -95,7 +95,7 @@ describe('Trace query view-model', () => {
   })
 
   it('appCodeOnly hides component-trigger from node_modules files', () => {
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'app-only' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'app-only' })!
     traceCollector.recordComponentTrigger('App', 'src/App.vue')
     traceCollector.recordComponentTrigger('LibWidget', 'node_modules/lib/Widget.vue')
 

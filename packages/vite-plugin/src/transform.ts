@@ -14,6 +14,7 @@ export interface TransformOptions {
   root?: string
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
   events?: TraceEventType[]
+  maxMemoryMB?: number
 }
 
 const SOURCE_EXT_RE = /\.(vue|ts|js|tsx|jsx|mts|mjs)$/
@@ -112,8 +113,13 @@ function serializeRedactMatcher(
 export function buildConfigureCall(options: TransformOptions): string {
   const calls: string[] = []
 
-  if (options.events !== undefined) {
-    calls.push(`traceCollector.configureRecording({ events: ${JSON.stringify(options.events)} });`)
+  if (options.events !== undefined || options.maxMemoryMB !== undefined) {
+    const fields: string[] = []
+    if (options.events !== undefined) fields.push(`events: ${JSON.stringify(options.events)}`)
+    if (options.maxMemoryMB !== undefined) {
+      fields.push(`maxMemoryMB: ${JSON.stringify(options.maxMemoryMB)}`)
+    }
+    calls.push(`traceCollector.configureRecording({ ${fields.join(', ')} });`)
   }
 
   if (options.redact !== undefined) {
@@ -126,7 +132,9 @@ export function buildConfigureCall(options: TransformOptions): string {
 
 function runtimePreamble(options: TransformOptions): string {
   const imports = [...RUNTIME_HELPER_IMPORTS]
-  if (options.events !== undefined) imports.push('traceCollector')
+  if (options.events !== undefined || options.maxMemoryMB !== undefined) {
+    imports.push('traceCollector')
+  }
   if (options.redact !== undefined) imports.push('__trace_configure')
   return `import { ${imports.join(', ')} } from '@vue-reactive-trace/runtime';\n${buildConfigureCall(options)}`
 }

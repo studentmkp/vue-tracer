@@ -112,7 +112,7 @@ describe('TraceSession — one trace across continuations', () => {
   it.each(['promise', 'microtask', 'raf', 'timeout'] as const)(
     'keeps a %s continuation on the interaction trace until it drains',
     (taskType) => {
-      const trace = traceCollector.startInteractionTrace('click')
+      const trace = traceCollector.startInteractionTrace('click')!
 
       // A mock continuation: what async-context does for each patched global,
       // without patching Promise.prototype in the test itself.
@@ -153,7 +153,7 @@ describe('TraceSession — installed runtime', () => {
   it('does not adopt its own completion timer as pending async work', () => {
     installTracing({ interactions: false })
 
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'sync-work' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'sync-work' })!
     expect(trace.events.filter((e) => e.type === 'async')).toHaveLength(0)
     expect(traceSession.getPendingTasks(trace)).toBe(0)
 

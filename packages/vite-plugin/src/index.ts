@@ -9,6 +9,8 @@ export interface ReactiveTracePluginOptions {
   editor?: 'vscode' | 'cursor' | 'webstorm' | string
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
   events?: TraceEventType[]
+  /** Retention budget for retained Traces, in MiB. Unset means unlimited. */
+  maxMemoryMB?: number
 }
 
 export function openInEditor(
@@ -171,7 +173,8 @@ export default function reactiveTrace(options: ReactiveTracePluginOptions = {}):
       return transformCode(code, id, {
         root,
         redact: options.redact,
-        events: options.events
+        events: options.events,
+        maxMemoryMB: options.maxMemoryMB
       })
     }
   }

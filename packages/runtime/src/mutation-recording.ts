@@ -205,8 +205,8 @@ export function recordInstrumentedMutation<T>(input: {
     traceCollector.setActiveMutation(mutationEvent)
 
     const result = run()
-    if (mutationEvent && after !== undefined) {
-      mutationEvent.after = typeof after === 'function' ? after() : after
+    if (after !== undefined) {
+      traceCollector.finalizeMutation(mutationEvent, typeof after === 'function' ? after() : after)
     }
     return result
   } finally {

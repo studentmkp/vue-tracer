@@ -981,7 +981,7 @@ set.add('guest')
   describe('DevTools UI (MVP 2 Timeline Tracks & Details)', () => {
     it('renders Async Tasks, Watch, and Aggregated Mutation tracks in Timeline and Details', () => {
       traceCollector.clearTraces()
-      const trace = traceCollector.startTrace({ type: 'manual', event: 'mvp2-ui-test' })
+      const trace = traceCollector.startTrace({ type: 'manual', event: 'mvp2-ui-test' })!
 
       // 1. Async task
       traceCollector.recordAsyncTask('promise')
@@ -1230,7 +1230,7 @@ export const useCart = () => {
 
   describe('Trace Export & Import (Section 49)', () => {
     it('exports single trace session as structured export data', () => {
-      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })
+      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })!
       traceCollector.recordMutation({
         name: 'user',
         operation: 'set',
@@ -1250,7 +1250,7 @@ export const useCart = () => {
     })
 
     it('exports traces as valid JSON string and supports importing them', () => {
-      const trace = traceCollector.startTrace({ type: 'manual', event: 'export-import-test' })
+      const trace = traceCollector.startTrace({ type: 'manual', event: 'export-import-test' })!
       traceCollector.recordMutation({
         name: 'testVar',
         operation: 'set',
@@ -1277,7 +1277,7 @@ export const useCart = () => {
 
   describe('Advanced Filtering & Noise Reduction (Section 41, 42)', () => {
     it('filters events by type', () => {
-      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })
+      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })!
       traceCollector.recordMutation({
         name: 'items',
         operation: 'push',
@@ -1303,7 +1303,7 @@ export const useCart = () => {
     })
 
     it('filters events by text query matching variable, component, and file names', () => {
-      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })
+      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })!
       traceCollector.recordMutation({
         name: 'cartItems',
         operation: 'push',
@@ -1331,7 +1331,7 @@ export const useCart = () => {
     })
 
     it('implements Section 42 Noise Reduction with appCodeOnly filter', () => {
-      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })
+      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })!
 
       // App code mutation
       traceCollector.recordMutation({
@@ -1364,7 +1364,7 @@ export const useCart = () => {
     })
 
     it('filters events by minDuration and affected component', () => {
-      const trace = traceCollector.startTrace({ type: 'manual', event: 'duration-test' })
+      const trace = traceCollector.startTrace({ type: 'manual', event: 'duration-test' })!
       traceCollector.recordComponentRender('FastComponent', 10, 10.5, 'Fast.vue') // duration: 0.5ms
       traceCollector.recordComponentRender('SlowComponent', 10, 25, 'Slow.vue') // duration: 15ms
 
@@ -1381,7 +1381,7 @@ export const useCart = () => {
   describe('DevTools UI (MVP 3 Controls, Badges & Links)', () => {
     it('renders Filter Bar, Export JSON button, clickable source locations, and MVP 3 labels', () => {
       traceCollector.clearTraces()
-      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })
+      const trace = traceCollector.startTrace({ type: 'interaction', event: 'click', targetTag: 'button' })!
 
       // 1. Composable mutation
       traceCollector.recordMutation({

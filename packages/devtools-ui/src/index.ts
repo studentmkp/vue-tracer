@@ -550,10 +550,15 @@ export function initDevTools() {
 
   function render() {
     const traces = traceCollector.getTraces()
-    const activeTrace = traces.find((t) => t.id === selectedTraceId) || traces[traces.length - 1]
 
-    if (activeTrace && selectedTraceId === null) {
-      selectedTraceId = activeTrace.id
+    // Eviction can remove the selected Trace between renders: fall back to the
+    // latest retained Trace, or clear the selection when nothing is retained.
+    let activeTrace =
+      selectedTraceId === null ? undefined : traces.find((t) => t.id === selectedTraceId)
+    if (!activeTrace) {
+      activeTrace = traces[traces.length - 1]
+      selectedTraceId = activeTrace ? activeTrace.id : null
+      if (!activeTrace) selectedEventId = null
     }
 
     const view = activeTrace ? queryTraceView(activeTrace, getActiveFilterOptions()) : null

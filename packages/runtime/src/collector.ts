@@ -176,40 +176,242 @@ export function aggregateTraceEvents(
   return result
 }
 
+const BYTES_PER_MIB = 1024 * 1024
+
+const utf8Encoder: TextEncoder | null =
+  typeof TextEncoder !== 'undefined' ? new TextEncoder() : null
+
+/** UTF-8 byte length; TextEncoder is present in every supported runtime. */
+function utf8ByteLength(text: string): number {
+  if (utf8Encoder) return utf8Encoder.encode(text).length
+
+  let bytes = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code < 0x80) bytes += 1
+    else if (code < 0x800) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      bytes += 4
+      i++
+    } else bytes += 3
+  }
+  return bytes
+}
+
+/**
+ * The Trace view the JSON export writes: the live-only `target` reference on a
+ * mutation is excluded, everything else (trigger, timestamps, status, events,
+ * snapshots) is included.
+ */
+function toExportSafeTrace(trace: Trace): Trace {
+  return {
+    ...trace,
+    events: trace.events.map((event) => {
+      if (event.type !== 'mutation') return event
+      const { target: _liveTarget, ...rest } = event as MutationEvent
+      return rest as MutationEvent
+    })
+  }
+}
+
+/**
+ * Export-safe compact JSON size of one Trace, in bytes. BigInt payloads have no
+ * JSON representation (exporting such a trace throws), so they are counted as
+ * their decimal string to keep estimation non-throwing and deterministic.
+ */
+function estimateTraceBytes(trace: Trace): number {
+  return utf8ByteLength(
+    JSON.stringify(toExportSafeTrace(trace), (_key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    )
+  )
+}
+
+interface RetentionPass {
+  /** True when at least one completed Trace was removed. */
+  evicted: boolean
+  /** True when the retained total is still over budget after eviction. */
+  overBudget: boolean
+}
+
 class TraceCollector {
   private traces: Trace[] = []
   private _activeMutation: MutationEvent | null = null
   private enabled: boolean = true
-  private listeners: Set<(trace: Trace, allTraces: Trace[]) => void> = new Set()
+  private listeners: Set<(trace: Trace | null, allTraces: Trace[]) => void> = new Set()
   private mutationIndex = new Map<number, MutationEvent>()
   /** `null` means retain every top-level event type; an empty set retains none. */
   private recordingEventTypes: Set<TraceEventType> | null = null
+  /** `null` means no retention budget: retained traces grow without limit. */
+  private maxMemoryBytes: number | null = null
+  private traceSizeCache = new WeakMap<Trace, number>()
   private readonly session: TraceSession
 
   constructor(session: TraceSession = traceSession) {
     this.session = session
     // Lifecycle changes (pending work, completion) are news the UI needs too.
-    this.session.subscribe(() => this.notify())
+    this.session.subscribe((trace) => this.handleSessionChange(trace))
   }
 
   public isEnabled(): boolean {
     return this.enabled
   }
 
-  public setEnabled(val: boolean) {
-    this.enabled = val
+  /**
+   * `false` stops new traces, events, and async adoption without touching retained
+   * data. `true` is an explicit resume: it enforces the budget first (a completed
+   * current Trace becomes an eviction candidate) and only enables recording when
+   * the retained set fits.
+   */
+  public setEnabled(val: boolean): void {
+    if (!val) {
+      if (!this.enabled) return
+      this.enabled = false
+      this.notify()
+      return
+    }
+
+    const pass = this.enforceRetention(null)
+    if (pass.overBudget) {
+      if (this.enabled) {
+        this.enabled = false
+        this.notify()
+      }
+      return
+    }
+
+    const changed = !this.enabled
+    this.enabled = true
+    if (changed || pass.evicted) this.notify()
   }
 
   /**
-   * Configures the recording allow-list at the collector seam.
+   * Configures the recording policy at the collector seam.
    *
-   * `undefined` means retain all recorded event types, while an empty array
-   * intentionally retains none. The input is copied so later mutations by a
-   * plugin caller cannot change an active recording policy.
+   * The call replaces the whole policy: `events` unset retains all recorded event
+   * types, `maxMemoryMB` unset removes the retention budget. The event list is
+   * copied so later mutations by a plugin caller cannot change the active policy.
+   * A set `maxMemoryMB` is a retention budget in MiB (fractions allowed) that is
+   * enforced immediately; an invalid value throws before any state changes.
    */
-  public configureRecording(options: { events?: readonly TraceEventType[] } = {}): void {
+  public configureRecording(options: {
+    events?: readonly TraceEventType[]
+    maxMemoryMB?: number
+  } = {}): void {
+    let maxMemoryBytes: number | null = null
+    if (options.maxMemoryMB !== undefined) {
+      if (
+        typeof options.maxMemoryMB !== 'number' ||
+        !Number.isFinite(options.maxMemoryMB) ||
+        options.maxMemoryMB <= 0
+      ) {
+        throw new RangeError(
+          `[vue-tracer] maxMemoryMB must be a finite number greater than 0; received ${String(
+            options.maxMemoryMB
+          )}`
+        )
+      }
+      maxMemoryBytes = options.maxMemoryMB * BYTES_PER_MIB
+    }
+
     this.recordingEventTypes =
       options.events === undefined ? null : new Set<TraceEventType>(options.events)
+    this.maxMemoryBytes = maxMemoryBytes
+
+    const pass = this.enforceRetention(this.session.current)
+    if (pass.overBudget) this.enabled = false
+    this.notify()
+  }
+
+  /** Session completion/pending changes: release live refs, re-account, enforce. */
+  private handleSessionChange(trace: Trace | null): void {
+    if (trace && trace.status === 'completed') this.finalizeCompletedTrace(trace)
+
+    const pass = this.enforceRetention(this.session.current)
+    if (pass.overBudget) this.enabled = false
+    this.notify()
+  }
+
+  /** A completed Trace must not pin live app state through mutation `target`s. */
+  private finalizeCompletedTrace(trace: Trace): void {
+    for (const event of trace.events) {
+      if (event.type === 'mutation') event.target = undefined
+    }
+    if (this.maxMemoryBytes !== null) this.updateTraceSize(trace)
+  }
+
+  private updateTraceSize(trace: Trace): number {
+    const bytes = estimateTraceBytes(trace)
+    this.traceSizeCache.set(trace, bytes)
+    return bytes
+  }
+
+  private traceBytes(trace: Trace): number {
+    const cached = this.traceSizeCache.get(trace)
+    return cached === undefined ? this.updateTraceSize(trace) : cached
+  }
+
+  private retainedBytes(): number {
+    let total = 0
+    for (const trace of this.traces) total += this.traceBytes(trace)
+    return total
+  }
+
+  /**
+   * The one retention pass every retained-content change goes through: re-estimate
+   * the changed Trace, evict completed Traces oldest-first, and auto-pause when the
+   * protected current Trace alone cannot fit. Without a budget this is a no-op, so
+   * unbounded recording does not pay for size estimation.
+   */
+  private applyRetention(trace: Trace): void {
+    if (this.maxMemoryBytes === null) return
+
+    this.updateTraceSize(trace)
+    const pass = this.enforceRetention(this.session.current)
+    if (pass.overBudget) this.enabled = false
+  }
+
+  private enforceRetention(protectedTrace: Trace | null): RetentionPass {
+    const limit = this.maxMemoryBytes
+    if (limit === null) return { evicted: false, overBudget: false }
+
+    let evicted = false
+    for (const trace of this.evictionCandidates(protectedTrace)) {
+      if (this.retainedBytes() <= limit) break
+      this.evictTrace(trace)
+      evicted = true
+    }
+
+    return { evicted, overBudget: this.retainedBytes() > limit }
+  }
+
+  /** Completed Traces by `startedAt`, tie-broken by their current retained order. */
+  private evictionCandidates(protectedTrace: Trace | null): Trace[] {
+    return this.traces
+      .map((trace, retainedOrder) => ({ trace, retainedOrder }))
+      .filter(({ trace }) => trace.status === 'completed' && trace !== protectedTrace)
+      .sort(
+        (a, b) => a.trace.startedAt - b.trace.startedAt || a.retainedOrder - b.retainedOrder
+      )
+      .map(({ trace }) => trace)
+  }
+
+  /** Removes one Trace from the single retained set, index, cache, and live refs. */
+  private evictTrace(trace: Trace): void {
+    const index = this.traces.indexOf(trace)
+    if (index !== -1) this.traces.splice(index, 1)
+    this.traceSizeCache.delete(trace)
+
+    for (const event of trace.events) {
+      if (event.type !== 'mutation') continue
+      if (this.mutationIndex.get(event.id) === event) this.mutationIndex.delete(event.id)
+      event.target = undefined
+    }
+
+    if (this._activeMutation && this._activeMutation.traceId === trace.id) {
+      this._activeMutation = null
+    }
+    if (this.session.current === trace) this.session.setCurrent(null)
   }
 
   public isInternalAsync(): boolean {
@@ -271,6 +473,7 @@ class TraceCollector {
     }
 
     trace.events.push(event)
+    this.applyRetention(trace)
     return event
   }
 
@@ -278,35 +481,48 @@ class TraceCollector {
     return this.traces
   }
 
-  public clearTraces() {
+  /**
+   * Clears retained Traces, indexes, size accounting, and session state. The
+   * recording policy (`events`, `maxMemoryMB`) and the enabled/disabled flag stay
+   * as configured: after an overflow auto-pause, resuming still takes an explicit
+   * `setEnabled(true)`.
+   */
+  public clearTraces(): void {
     this.traces = []
     this._activeMutation = null
     this.mutationIndex.clear()
+    this.traceSizeCache = new WeakMap()
     this.session.clear()
     this.notify()
   }
 
-  public subscribe(listener: (trace: Trace, allTraces: Trace[]) => void): () => void {
+  public subscribe(listener: (trace: Trace | null, allTraces: Trace[]) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
 
-  private notify() {
-    const trace = this.session.current
-    if (trace) {
-      for (const listener of this.listeners) {
-        try {
-          listener(trace, this.traces)
-        } catch (e) {
-          console.error('[vue-tracer] Listener error', e)
-        }
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(this.session.current, this.traces)
+      } catch (e) {
+        console.error('[vue-tracer] Listener error', e)
       }
     }
   }
 
-  public startTrace(trigger: Trace['trigger']): Trace {
+  /** Starts a Trace. While recording is disabled no Trace is created. */
+  public startTrace(trigger: Trace['trigger']): Trace | null {
+    if (!this.enabled) return null
+
+    const previous = this.session.current
     const trace = this.session.begin(trigger)
+    if (previous && previous !== trace && previous.status === 'completed') {
+      this.finalizeCompletedTrace(previous)
+    }
+
     this.traces.push(trace)
+    this.applyRetention(trace)
     this.notify()
     return trace
   }
@@ -315,7 +531,9 @@ class TraceCollector {
     eventType: string,
     target?: HTMLElement | Element | null,
     source?: SourceLocation
-  ): Trace {
+  ): Trace | null {
+    if (!this.enabled) return null
+
     const targetTag = target ? target.tagName.toLowerCase() : 'unknown'
     let targetText: string | undefined
     if (target) {
@@ -333,6 +551,7 @@ class TraceCollector {
       targetText,
       source
     })
+    if (!trace) return null
 
     const interactionEvent: InteractionEvent = {
       id: eventIdCounter++,
@@ -368,6 +587,8 @@ class TraceCollector {
     scope?: MutationEvent['scope']
     declaredAt?: SourceLocation
   }): MutationEvent | null {
+    if (!this.enabled) return null
+
     if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
@@ -375,7 +596,8 @@ class TraceCollector {
       })
     }
 
-    const trace = this.session.current!
+    const trace = this.session.current
+    if (!trace) return null
     const isExternal = data.isExternal ?? false
     const confidence = data.confidence || (isExternal ? 'inferred' : 'exact')
     const traceLevel = data.traceLevel || (isExternal ? 'partial' : 'full')
@@ -418,15 +640,16 @@ class TraceCollector {
     file?: string,
     options?: ComponentEventOptions
   ): ComponentTriggerEvent | null {
+    if (!this.enabled) return null
+
     const trace = this.session.current
     if (!trace) return null
 
     const cause = this.resolveCause(options)
 
     // Associate component with the mutation that caused it
-    if (cause && !cause.affectedComponents.includes(componentName)) {
-      cause.affectedComponents.push(componentName)
-    }
+    const causeUpdated = cause !== null && !cause.affectedComponents.includes(componentName)
+    if (causeUpdated) cause.affectedComponents.push(componentName)
 
     const triggerEvent: ComponentTriggerEvent = {
       id: eventIdCounter++,
@@ -440,6 +663,8 @@ class TraceCollector {
     }
 
     const retained = this.retainEvent(trace, triggerEvent)
+    // A filtered-out trigger event still changed the cause's `affectedComponents`.
+    if (causeUpdated && retained === null) this.applyRetention(trace)
     this.session.arm(trace)
     this.notify()
     return retained
@@ -452,6 +677,8 @@ class TraceCollector {
     file?: string,
     options?: ComponentEventOptions
   ): ComponentRenderEvent | null {
+    if (!this.enabled) return null
+
     const trace = this.session.current
     if (!trace) return null
 
@@ -479,6 +706,8 @@ class TraceCollector {
     source?: SourceLocation
     target?: any
   }): ComputedEvent | null {
+    if (!this.enabled) return null
+
     if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
@@ -486,7 +715,8 @@ class TraceCollector {
       })
     }
 
-    const trace = this.session.current!
+    const trace = this.session.current
+    if (!trace) return null
     const triggeredByMutationId = this.resolveCause()?.id
 
     const computedEvent: ComputedEvent = {
@@ -507,9 +737,13 @@ class TraceCollector {
   }
 
   public recordAsyncTask(taskType: AsyncTaskType, name?: string): AsyncTaskEvent | null {
+    if (!this.enabled) return null
+
     const trace = this.session.current
     if (!trace) return null
-    return this.recordAsyncEventOn(trace, taskType, name)
+    const asyncEvent = this.recordAsyncEventOn(trace, taskType, name)
+    this.notify()
+    return asyncEvent
   }
 
   /**
@@ -521,6 +755,8 @@ class TraceCollector {
     taskType: AsyncTaskType,
     name?: string
   ): AsyncTaskEvent | null {
+    if (!this.enabled) return null
+
     const asyncEvent = this.recordAsyncEventOn(trace, taskType, name)
     // Adoption is lifecycle bookkeeping, not event storage. It must still
     // happen when `async` is excluded so later work stays on this Trace.
@@ -531,6 +767,22 @@ class TraceCollector {
   /** Settles a continuation adopted by `adoptAsyncTask`, re-arming completion. */
   public settleAsyncTask(trace: Trace): void {
     this.session.settle(trace)
+  }
+
+  /**
+   * Completes a mutation that was already retained: the `after` snapshot is only
+   * known behind the application write, so the recorder hands it back here for
+   * size accounting and retention. The write itself is never gated by this call.
+   */
+  public finalizeMutation(mutation: MutationEvent | null, after: unknown): void {
+    if (!mutation) return
+    mutation.after = after
+
+    const trace = this.traces.find((t) => t.id === mutation.traceId)
+    if (!trace) return
+
+    this.applyRetention(trace)
+    this.notify()
   }
 
   private recordAsyncEventOn(
@@ -556,6 +808,8 @@ class TraceCollector {
     name?: string
     source?: SourceLocation
   }): WatchEvent | null {
+    if (!this.enabled) return null
+
     if (!this.session.current || this.session.current.status !== 'active') {
       this.startTrace({
         type: 'manual',
@@ -563,7 +817,8 @@ class TraceCollector {
       })
     }
 
-    const trace = this.session.current!
+    const trace = this.session.current
+    if (!trace) return null
     const triggeredByMutationId = this.resolveCause()?.id
 
     const watchEvent: WatchEvent = {
@@ -611,22 +866,38 @@ class TraceCollector {
     return JSON.stringify(data, null, 2)
   }
 
+  /**
+   * Merges an exported snapshot into the retained set. Import is a data load, not
+   * runtime recording, so it works while disabled — but the same budget applies:
+   * imported `active` Traces become completed snapshots, a local active current
+   * Trace is never replaced, and an oversized import can evict completed Traces
+   * (or auto-pause when the selected Trace alone cannot fit).
+   */
   public importTraces(data: string | TraceExportData): void {
     const parsed: TraceExportData = typeof data === 'string' ? JSON.parse(data) : data
-    if (parsed && Array.isArray(parsed.traces)) {
-      for (const t of parsed.traces) {
-        if (!this.traces.some((existing) => existing.id === t.id)) {
-          this.traces.push(t)
-          for (const event of t.events) {
-            if (event.type === 'mutation') this.mutationIndex.set(event.id, event)
-          }
-        }
+    if (!parsed || !Array.isArray(parsed.traces)) return
+
+    const inserted: Trace[] = []
+    for (const t of parsed.traces) {
+      if (!t || this.traces.some((existing) => existing.id === t.id)) continue
+
+      const trace: Trace = t.status === 'completed' ? t : { ...t, status: 'completed' }
+      this.traces.push(trace)
+      inserted.push(trace)
+      if (this.maxMemoryBytes !== null) this.updateTraceSize(trace)
+      for (const event of trace.events) {
+        if (event.type === 'mutation') this.mutationIndex.set(event.id, event)
       }
-      if (parsed.traces.length > 0) {
-        this.session.setCurrent(this.traces[this.traces.length - 1])
-      }
-      this.notify()
     }
+
+    const current = this.session.current
+    if (inserted.length > 0 && (!current || current.status !== 'active')) {
+      this.session.setCurrent(inserted[inserted.length - 1])
+    }
+
+    const pass = this.enforceRetention(this.session.current)
+    if (pass.overBudget) this.enabled = false
+    this.notify()
   }
 
   private createExportData(traceList: Trace[]): TraceExportData {

@@ -39,7 +39,12 @@ export function installAsyncTracking(): void {
       'then',
       function (this: any, onFulfilled?: any, onRejected?: any) {
         const trace = traceCollector.getCurrentTrace()
-        if (!trace || trace.status !== 'active' || traceCollector.isInternalAsync()) {
+        if (
+          !trace ||
+          trace.status !== 'active' ||
+          !traceCollector.isEnabled() ||
+          traceCollector.isInternalAsync()
+        ) {
           return origThen.call(this, onFulfilled, onRejected)
         }
 
@@ -89,6 +94,7 @@ export function installAsyncTracking(): void {
         if (
           !trace ||
           trace.status !== 'active' ||
+          !traceCollector.isEnabled() ||
           traceCollector.isInternalAsync() ||
           typeof cb !== 'function'
         ) {
@@ -124,6 +130,7 @@ export function installAsyncTracking(): void {
         if (
           !trace ||
           trace.status !== 'active' ||
+          !traceCollector.isEnabled() ||
           traceCollector.isInternalAsync() ||
           typeof cb !== 'function'
         ) {
@@ -159,6 +166,7 @@ export function installAsyncTracking(): void {
         if (
           !trace ||
           trace.status !== 'active' ||
+          !traceCollector.isEnabled() ||
           traceCollector.isInternalAsync() ||
           typeof cb !== 'function' ||
           numDelay > MAX_TRACKED_DELAY_MS

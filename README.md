@@ -75,6 +75,7 @@ export default defineConfig({
       editor: 'cursor', // 'vscode' | 'cursor' | 'webstorm' | custom binary
       // redact: ['**.ssn'],
       // events: ['mutation', 'component-render'], // only retain these event types
+      // maxMemoryMB: 25, // retention budget for retained traces, in MiB
       // enabled: true, // also instrument `vite build`
     }),
     vue(),
@@ -182,6 +183,7 @@ The overlay is a fixed panel (not a browser-extension DevTools tab).
 | `editor` | `EDITOR` / `VISUAL`, else VS Code | Used by the open-source middleware |
 | `redact` | built-in sensitive keys | Extra glob strings (`'**.ssn'`) or `(value, ctx) => unknown` functions |
 | `events` | all recorded event types | Recording allow-list; valid values are `interaction`, `mutation`, `computed`, `watch`, `component-trigger`, `component-render`, and `async` |
+| `maxMemoryMB` | unset (unlimited) | Retention budget for the retained trace payload, in MiB. Fractions are allowed. An invalid value throws a `RangeError` from `configureRecording()` |
 
 `events` is applied while recording, before an event enters `Trace.events`. Leaving it
 undefined retains every recorded event; `events: []` retains none. The trace trigger
@@ -193,7 +195,42 @@ If a dependent event is allowed but the mutation that would have caused it is no
 the dependent event is still retained without `triggeredByMutationId`. The collector
 never secretly retains the dropped mutation or emits a dangling causal id. Async
 subtypes such as `microtask` are values of an `async` event's `taskType`, not values
-for the top-level `events` option.
+for the top-level `events` option. A recording-policy call (`configureRecording({...})`)
+replaces the whole policy: omitted fields reset to their defaults (all events, no budget).
+Re-applying the same values is idempotent, so the per-module preamble cannot clear
+traces or toggle recording.
+
+### Bounded retention (`maxMemoryMB`)
+
+`maxMemoryMB` caps the retained trace payload. It is an estimate of what the collector
+keeps, **not** a JavaScript heap limit:
+
+- The size of a Trace is the UTF-8 byte length of its compact, export-safe JSON. The
+  live-only `target` reference on a mutation is excluded; the trigger, timestamps,
+  status, events, and snapshots are included. The export wrapper (`version`, `summary`,
+  array separators) and collector bookkeeping are not counted.
+- Eviction always removes whole Traces, never single events. Only completed Traces are
+  evicted, oldest `startedAt` first (ties keep their retained order). The Trace the
+  collector is currently recording is never evicted.
+- The current Trace is allowed to overshoot the budget on its own. When that happens,
+  the collector keeps the complete Trace, stops recording (auto-pause), and the overlay
+  shows the paused state immediately. Resume with an explicit `setEnabled(true)`, which
+  first enforces the budget: a completed oversized current Trace can be evicted to make
+  room; an active oversized one keeps recording paused until it finishes, the budget is
+  raised, or `clearTraces()` runs.
+- `setEnabled(false)` only stops new traces, events, and async adoption; retained Traces
+  are untouched. Already adopted async work still settles and can complete its Trace.
+- `clearTraces()` empties retained Traces, the mutation index, and session state but keeps
+  the `events`/`maxMemoryMB` policy and the enabled/disabled flag. After an overflow
+  auto-pause, clearing still requires an explicit `setEnabled(true)`.
+- `importTraces()` is a data load, so it works while recording is disabled, but it applies
+  the same budget: imported `active` Traces become completed snapshots, a local active
+  current Trace is never replaced, and an oversized import evicts older completed Traces
+  (or auto-pauses when the selected Trace alone cannot fit).
+
+Completed Traces release their mutation `target` references, so finished history does not
+pin live application state; `maxMemoryMB` does not include those references while the
+Trace is being recorded.
 
 The transform instruments supported syntax in app source (not `node_modules`, not this repo’s `packages/*/src`).
 

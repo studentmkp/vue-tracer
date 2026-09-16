@@ -82,7 +82,7 @@ describe('§3 — importing the runtime installs nothing', () => {
     const { ref } = await import('vue')
 
     const count = fresh.__trace_register(ref(0), { name: 'count', type: 'ref' })
-    const trace = fresh.traceCollector.startTrace({ type: 'manual', event: 'unpatched' })
+    const trace = fresh.traceCollector.startTrace({ type: 'manual', event: 'unpatched' })!
 
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -196,7 +196,7 @@ describe('§3 — explicit install / uninstall', () => {
     const state = __trace_register({ n: 0 }, { name: 'state', type: 'reactive' })
 
     installAsyncTracking()
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'timer' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'timer' })!
 
     await new Promise<void>((resolve) => {
       setTimeout(() => {

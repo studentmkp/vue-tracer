@@ -64,7 +64,7 @@ describe('collector recording event allow-list', () => {
   it('retains every recorded event type when events is unset', () => {
     const target = document.createElement('button')
     target.textContent = 'Save'
-    const trace = traceCollector.startInteractionTrace('click', target, source)
+    const trace = traceCollector.startInteractionTrace('click', target, source)!
     const mutation = recordMutation()
 
     traceCollector.setActiveMutation(mutation)
@@ -91,7 +91,7 @@ describe('collector recording event allow-list', () => {
 
   it('stores only event types in the configured allow-list', () => {
     traceCollector.configureRecording({ events: ['mutation', 'component-render'] })
-    const trace = traceCollector.startInteractionTrace('click', document.createElement('button'))
+    const trace = traceCollector.startInteractionTrace('click', document.createElement('button'))!
     const mutation = recordMutation()
 
     traceCollector.setActiveMutation(mutation)
@@ -109,7 +109,7 @@ describe('collector recording event allow-list', () => {
     traceCollector.configureRecording({ events: [] })
     const target = document.createElement('button')
     target.textContent = 'Do it'
-    const trace = traceCollector.startInteractionTrace('click', target, source)
+    const trace = traceCollector.startInteractionTrace('click', target, source)!
 
     const mutation = traceCollector.recordMutation({
       name: 'count',
@@ -147,7 +147,7 @@ describe('collector recording event allow-list', () => {
 
   it('preserves interaction and automatically-created manual triggers', () => {
     traceCollector.configureRecording({ events: [] })
-    const interaction = traceCollector.startInteractionTrace('input', document.createElement('input'))
+    const interaction = traceCollector.startInteractionTrace('input', document.createElement('input'))!
     expect(interaction.trigger.type).toBe('interaction')
     expect(interaction.events).toEqual([])
 
@@ -170,7 +170,7 @@ describe('collector recording event allow-list', () => {
     traceCollector.configureRecording({
       events: ['mutation', 'computed', 'watch', 'component-trigger', 'component-render']
     })
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'causality' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'causality' })!
     const mutation = recordMutation()
 
     traceCollector.setActiveMutation(mutation)
@@ -199,7 +199,7 @@ describe('collector recording event allow-list', () => {
     traceCollector.configureRecording({
       events: ['computed', 'watch', 'component-trigger', 'component-render']
     })
-    const trace = traceCollector.startTrace({ type: 'manual', event: 'dropped-cause' })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'dropped-cause' })!
     const dropped = traceCollector.recordMutation({
       name: 'count',
       operation: 'set',
@@ -225,7 +225,7 @@ describe('collector recording event allow-list', () => {
 
   it('keeps adopted continuation lifecycle independent of async event retention', () => {
     traceCollector.configureRecording({ events: ['mutation'] })
-    const trace = traceCollector.startInteractionTrace('click')
+    const trace = traceCollector.startInteractionTrace('click')!
 
     const asyncEvent = traceCollector.adoptAsyncTask(trace, 'promise', 'save-request')
     expect(asyncEvent).toBeNull()
@@ -243,7 +243,7 @@ describe('collector recording event allow-list', () => {
 
   it('exports exactly the retained Trace.events without a second config filter', () => {
     traceCollector.configureRecording({ events: ['mutation', 'component-render'] })
-    const trace = traceCollector.startInteractionTrace('click')
+    const trace = traceCollector.startInteractionTrace('click')!
     const mutation = recordMutation()
     traceCollector.recordComponentRender('Counter', 10, 12, 'src/Counter.vue', {
       triggeredByMutationId: mutation.id
