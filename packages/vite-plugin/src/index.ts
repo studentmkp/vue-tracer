@@ -7,16 +7,6 @@ import type { RedactContext } from '@vue-reactive-trace/runtime'
 export interface ReactiveTracePluginOptions {
   enabled?: boolean
   editor?: 'vscode' | 'cursor' | 'webstorm' | string
-
-  // §44
-  include?: string[]
-  exclude?: string[]
-  events?: string[]
-  async?: boolean
-  computed?: boolean
-  watch?: boolean
-  pinia?: boolean
-  maxMemoryMB?: number
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
 }
 
@@ -179,9 +169,7 @@ export default function reactiveTrace(options: ReactiveTracePluginOptions = {}):
 
       return transformCode(code, id, {
         root,
-        redact: options.redact,
-        maxMemoryMB: options.maxMemoryMB,
-        events: options.events
+        redact: options.redact
       })
     }
   }

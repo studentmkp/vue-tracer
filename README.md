@@ -74,8 +74,6 @@ export default defineConfig({
     reactiveTrace({
       editor: 'cursor', // 'vscode' | 'cursor' | 'webstorm' | custom binary
       // redact: ['**.ssn'],
-      // maxMemoryMB: 50,
-      // events: ['mutation', 'computed', 'watch', 'async', 'component-render'],
       // enabled: true, // also instrument `vite build`
     }),
     vue(),
@@ -182,10 +180,8 @@ The overlay is a fixed panel (not a browser-extension DevTools tab).
 | `enabled` | `false` for `vite build` | Dev server always instruments. Set `true` to instrument production builds. |
 | `editor` | `EDITOR` / `VISUAL`, else VS Code | Used by the open-source middleware |
 | `redact` | built-in sensitive keys | Extra glob strings (`'**.ssn'`) or `(value, ctx) => unknown` functions |
-| `maxMemoryMB` | unset | Passed through to runtime config |
-| `events` | unset | Restrict recorded event types when set |
 
-`include`, `exclude`, `async`, `computed`, `watch`, and `pinia` exist on the options type for the planned config surface; the transform currently always instruments supported syntax in app source (not `node_modules`, not this repo’s `packages/*/src`).
+The transform instruments supported syntax in app source (not `node_modules`, not this repo’s `packages/*/src`).
 
 ## What gets instrumented
 

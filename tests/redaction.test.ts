@@ -174,12 +174,27 @@ describe('§44 — configurable redaction', () => {
     resetRedact()
   })
 
-  it('applies custom string matchers from __trace_configure', () => {
+  it('applies custom string matchers during recording and export', () => {
     __trace_configure({ redact: ['**.password', '**.token', '**.ssn'] })
-    expect(safeClone({ ssn: '111-22-3333', name: 'Ada' })).toEqual({
-      ssn: REDACTED,
-      name: 'Ada'
-    })
+    const person = reactive({ profile: { ssn: '111-22-3333', name: 'Ada' } })
+    __trace_register(person, { name: 'person', type: 'reactive' })
+
+    __trace_set(
+      person,
+      'profile',
+      () => (person.profile = { ssn: '999-88-7777', name: 'Grace' }),
+      loc,
+      { rootName: 'person', path: ['profile'] }
+    )
+
+    const stored = traceCollector.getTraces().at(-1)!.events.at(-1) as MutationEvent
+    expect(stored.before).toEqual({ ssn: REDACTED, name: 'Ada' })
+    expect(stored.after).toEqual({ ssn: REDACTED, name: 'Grace' })
+
+    const exported = traceCollector.exportTracesAsJSON()
+    expect(exported).not.toContain('111-22-3333')
+    expect(exported).not.toContain('999-88-7777')
+    expect(exported).toContain(REDACTED)
   })
 
   it('applies a custom redact function', () => {
@@ -192,19 +207,23 @@ describe('§44 — configurable redaction', () => {
     })
   })
 
-  it('injects __trace_configure from plugin transform options', () => {
+  it('injects redaction configuration from plugin transform options', () => {
     const source = `const count = ref(0)\n`
     const result = transformCode(source, '/src/App.ts', {
       root: '/src',
-      redact: ['**.password', '**.token'],
-      maxMemoryMB: 50
+      redact: ['**.password', '**.token']
     })
     expect(result).not.toBeNull()
     expect(result!.code).toContain('__trace_configure')
     expect(result!.code).toContain('**.password')
     expect(result!.code).toContain('**.token')
-    expect(result!.code).toContain('maxMemoryMB: 50')
-    expect(result!.code).toContain('__trace_configure')
+  })
+
+  it('does not inject configuration when no custom redaction is configured', () => {
+    const result = transformCode(`const count = ref(0)\n`, '/src/App.ts', { root: '/src' })
+    expect(result).not.toBeNull()
+    expect(result!.code).toContain('__trace_register')
+    expect(result!.code).not.toContain('__trace_configure')
   })
 
   it('serializes function matchers into the injected configure call', () => {

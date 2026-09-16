@@ -13,8 +13,6 @@ import type { RedactContext } from '@vue-reactive-trace/runtime'
 export interface TransformOptions {
   root?: string
   redact?: (string | ((value: unknown, ctx: RedactContext) => unknown))[]
-  maxMemoryMB?: number
-  events?: string[]
 }
 
 const SOURCE_EXT_RE = /\.(vue|ts|js|tsx|jsx|mts|mjs)$/
@@ -94,7 +92,15 @@ export function transformCode(
   return null
 }
 
-const RUNTIME_IMPORTS = `import { __trace_register, __trace_register_computed, __trace_set, __trace_update, __trace_call, __trace_delete, __trace_watch_cb, __trace_configure } from '@vue-reactive-trace/runtime';\n`
+const RUNTIME_HELPER_IMPORTS = [
+  '__trace_register',
+  '__trace_register_computed',
+  '__trace_set',
+  '__trace_update',
+  '__trace_call',
+  '__trace_delete',
+  '__trace_watch_cb'
+]
 
 function serializeRedactMatcher(
   matcher: string | ((value: unknown, ctx: RedactContext) => unknown)
@@ -103,23 +109,18 @@ function serializeRedactMatcher(
 }
 
 export function buildConfigureCall(options: TransformOptions): string {
-  const hasRedact = options.redact !== undefined
-  const hasMemory = options.maxMemoryMB !== undefined
-  const hasEvents = options.events !== undefined
-  if (!hasRedact && !hasMemory && !hasEvents) return ''
+  if (options.redact === undefined) return ''
 
-  const parts: string[] = []
-  if (hasRedact) {
-    const items = (options.redact ?? []).map(serializeRedactMatcher)
-    parts.push(`redact: [${items.join(', ')}]`)
-  }
-  if (hasMemory) parts.push(`maxMemoryMB: ${JSON.stringify(options.maxMemoryMB)}`)
-  if (hasEvents) parts.push(`events: ${JSON.stringify(options.events)}`)
-  return `__trace_configure({ ${parts.join(', ')} });\n`
+  const items = options.redact.map(serializeRedactMatcher)
+  return `__trace_configure({ redact: [${items.join(', ')}] });\n`
 }
 
 function runtimePreamble(options: TransformOptions): string {
-  return RUNTIME_IMPORTS + buildConfigureCall(options)
+  const imports =
+    options.redact === undefined
+      ? RUNTIME_HELPER_IMPORTS
+      : [...RUNTIME_HELPER_IMPORTS, '__trace_configure']
+  return `import { ${imports.join(', ')} } from '@vue-reactive-trace/runtime';\n${buildConfigureCall(options)}`
 }
 
 const MUTATING_METHODS = new Set([

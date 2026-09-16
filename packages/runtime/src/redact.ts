@@ -38,14 +38,11 @@ export interface RedactConfig {
   disabled?: boolean
 }
 
-export interface RuntimeTraceConfig {
+export interface RuntimeRedactConfig {
   redact?: RedactMatcher[]
-  maxMemoryMB?: number
-  events?: string[]
 }
 
 let config: RedactConfig = {}
-let runtimeConfig: RuntimeTraceConfig = {}
 let lastConfigureKey = ''
 
 /** 由插件注入或使用者手動呼叫 */
@@ -55,12 +52,7 @@ export function configureRedact(next: RedactConfig): void {
 
 export function resetRedact(): void {
   config = {}
-  runtimeConfig = {}
   lastConfigureKey = ''
-}
-
-export function getRuntimeTraceConfig(): RuntimeTraceConfig {
-  return runtimeConfig
 }
 
 /** 將 '**.token' / 'password' / 'user.*.secret' 轉為比對函式 */
@@ -71,23 +63,17 @@ function compileMatcher(pattern: string): (ctx: RedactContext) => boolean {
   return (ctx) => normalize(ctx.key) === normalizedLeaf
 }
 
-function configureKey(next: RuntimeTraceConfig): string {
+function configureKey(next: RuntimeRedactConfig): string {
   return JSON.stringify({
-    maxMemoryMB: next.maxMemoryMB,
-    events: next.events,
     redact: next.redact?.map((m) => (typeof m === 'function' ? m.toString() : m))
   })
 }
 
-/**
- * Idempotent runtime 配置入口。由插件注入；重複呼叫同值無副作用。
- * maxMemoryMB / events 於此儲存，供 Plan 05 消費。
- */
-export function __trace_configure(next: RuntimeTraceConfig): void {
+/** Idempotent redaction configuration injected by the Vite transform. */
+export function __trace_configure(next: RuntimeRedactConfig): void {
   const key = configureKey(next)
   if (key === lastConfigureKey) return
   lastConfigureKey = key
-  runtimeConfig = { ...runtimeConfig, ...next }
   if (next.redact !== undefined) {
     configureRedact({ matchers: next.redact })
   }
