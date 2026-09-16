@@ -1,5 +1,5 @@
 import type { App, Plugin } from 'vue'
-import { traceCollector, registerReactive } from '@vue-reactive-trace/runtime'
+import { traceCollector, registerReactive, installTracing } from '@vue-reactive-trace/runtime'
 
 export function reactiveTracePiniaPlugin({ store }: { store: any }) {
   if (!store) return
@@ -42,6 +42,9 @@ function getComponentInfo(vm: any): { name: string; file?: string } {
 
 export const reactiveTraceVueAdapter: Plugin = {
   install(app: App) {
+    // Tracing starts here: this is the documented single install path.
+    installTracing()
+
     // Auto-integrate with Pinia if present
     const pinia = (app.config.globalProperties as any)?.$pinia
     if (pinia && typeof pinia.use === 'function') {

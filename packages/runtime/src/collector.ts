@@ -610,25 +610,3 @@ class TraceCollector {
 }
 
 export const traceCollector = new TraceCollector()
-
-// Auto-register browser interaction listeners in capture phase
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  const INTERACTION_EVENTS = ['click', 'input', 'change', 'submit', 'keydown']
-  for (const eventName of INTERACTION_EVENTS) {
-    document.addEventListener(
-      eventName,
-      (e) => {
-        if (!traceCollector.isEnabled()) return
-
-        const target = e.target as HTMLElement | null
-        // Avoid tracking devtool internal events
-        if (target && target.closest && target.closest('#__vue_reactive_trace_devtools__')) {
-          return
-        }
-
-        traceCollector.startInteractionTrace(eventName, target)
-      },
-      true // capture phase
-    )
-  }
-}

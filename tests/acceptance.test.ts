@@ -1,12 +1,16 @@
 import { resolve } from 'path'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createApp, ref, reactive, computed, watch, watchEffect, nextTick, defineComponent, h } from 'vue'
 import { createPinia, defineStore } from 'pinia'
 import {
   traceCollector,
   aggregateTraceEvents,
   filterTraceEvents,
+  installInteractionCapture,
+  uninstallInteractionCapture,
   registerExternalReactive,
+  installAsyncTracking,
+  uninstallAsyncTracking,
   __trace_register,
   __trace_register_computed,
   __trace_set,
@@ -556,6 +560,9 @@ function addItem(item) {
   })
 
   describe('Interaction Capture (input & change)', () => {
+    beforeEach(() => installInteractionCapture())
+    afterEach(() => uninstallInteractionCapture())
+
     it('captures input and change events in capture phase', () => {
       traceCollector.clearTraces()
 
@@ -673,6 +680,9 @@ set.add('guest')
   })
 
   describe('Async Context & Causality (async / await & Promise)', () => {
+    beforeEach(() => installAsyncTracking())
+    afterEach(() => uninstallAsyncTracking())
+
     it('maintains trace causality across async / await steps in login flow', async () => {
       const loading = __trace_register(ref(false), {
         name: 'loading',
@@ -731,6 +741,9 @@ set.add('guest')
   })
 
   describe('Async Context (queueMicrotask, requestAnimationFrame, setTimeout)', () => {
+    beforeEach(() => installAsyncTracking())
+    afterEach(() => uninstallAsyncTracking())
+
     it('propagates active trace into queueMicrotask continuation', async () => {
       const state = __trace_register(reactive({ count: 0 }), {
         name: 'state',

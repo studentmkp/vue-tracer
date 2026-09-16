@@ -1,85 +1,116 @@
 import { traceCollector } from './collector'
 
-let isTrackingInitialized = false
+/** setTimeout callbacks longer than this are not adopted into the current Trace. */
+const MAX_TRACKED_DELAY_MS = 3000
 
-export function initAsyncTracking() {
-  if (isTrackingInitialized) return
-  isTrackingInitialized = true
+interface PatchedGlobal {
+  target: any
+  key: string
+  original: any
+}
+
+let patches: PatchedGlobal[] | null = null
+
+function patch(target: any, key: string, replacement: any, applied: PatchedGlobal[]) {
+  applied.push({ target, key, original: target[key] })
+  target[key] = replacement
+}
+
+/**
+ * Adopts Promise/timer continuations into the Trace that is active when they are
+ * scheduled, so an interaction keeps its causality across `await` and timers.
+ *
+ * Explicit install: importing the runtime leaves the host globals untouched.
+ */
+export function installAsyncTracking(): void {
+  if (patches) return
+
+  const applied: PatchedGlobal[] = []
 
   // 1. Intercept Promise.prototype.then
-  if (typeof Promise !== 'undefined' && Promise.prototype && (Promise.prototype as any).then) {
+  if (typeof Promise !== 'undefined' && Promise.prototype && Promise.prototype.then) {
     const origThen = Promise.prototype.then
 
-    Promise.prototype.then = function (onFulfilled?: any, onRejected?: any) {
-      const trace = traceCollector.getCurrentTrace()
-      if (!trace || trace.status !== 'active' || traceCollector.isInternalAsync()) {
-        return origThen.call(this, onFulfilled, onRejected)
-      }
+    patch(
+      Promise.prototype,
+      'then',
+      function (this: any, onFulfilled?: any, onRejected?: any) {
+        const trace = traceCollector.getCurrentTrace()
+        if (!trace || trace.status !== 'active' || traceCollector.isInternalAsync()) {
+          return origThen.call(this, onFulfilled, onRejected)
+        }
 
-      traceCollector.recordAsyncTask('promise')
-      ;(trace as any).pendingTasks = ((trace as any).pendingTasks || 0) + 1
+        traceCollector.recordAsyncTask('promise')
+        trace.pendingTasks = (trace.pendingTasks || 0) + 1
 
-      const wrappedFulfilled =
-        typeof onFulfilled === 'function'
-          ? function (this: any, ...args: any[]) {
-              return traceCollector.runWithTrace(trace, () => {
-                try {
-                  return onFulfilled.apply(this, args)
-                } finally {
-                  ;(trace as any).pendingTasks = Math.max(0, ((trace as any).pendingTasks || 0) - 1)
-                  traceCollector.scheduleCompletion(trace)
-                }
-              })
-            }
-          : onFulfilled
+        const wrappedFulfilled =
+          typeof onFulfilled === 'function'
+            ? function (this: any, ...args: any[]) {
+                return traceCollector.runWithTrace(trace, () => {
+                  try {
+                    return onFulfilled.apply(this, args)
+                  } finally {
+                    trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
+                    traceCollector.scheduleCompletion(trace)
+                  }
+                })
+              }
+            : onFulfilled
 
-      const wrappedRejected =
-        typeof onRejected === 'function'
-          ? function (this: any, ...args: any[]) {
-              return traceCollector.runWithTrace(trace, () => {
-                try {
-                  return onRejected.apply(this, args)
-                } finally {
-                  ;(trace as any).pendingTasks = Math.max(0, ((trace as any).pendingTasks || 0) - 1)
-                  traceCollector.scheduleCompletion(trace)
-                }
-              })
-            }
-          : onRejected
+        const wrappedRejected =
+          typeof onRejected === 'function'
+            ? function (this: any, ...args: any[]) {
+                return traceCollector.runWithTrace(trace, () => {
+                  try {
+                    return onRejected.apply(this, args)
+                  } finally {
+                    trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
+                    traceCollector.scheduleCompletion(trace)
+                  }
+                })
+              }
+            : onRejected
 
-      return origThen.call(this, wrappedFulfilled, wrappedRejected)
-    }
+        return origThen.call(this, wrappedFulfilled, wrappedRejected)
+      },
+      applied
+    )
   }
 
   // 2. Intercept queueMicrotask
   if (typeof queueMicrotask !== 'undefined') {
     const origQueueMicrotask = queueMicrotask
     const targetObj = typeof window !== 'undefined' ? window : globalThis
-    ;(targetObj as any).queueMicrotask = function (cb: () => void) {
-      const trace = traceCollector.getCurrentTrace()
-      if (
-        !trace ||
-        trace.status !== 'active' ||
-        traceCollector.isInternalAsync() ||
-        typeof cb !== 'function'
-      ) {
-        return origQueueMicrotask(cb)
-      }
+    patch(
+      targetObj,
+      'queueMicrotask',
+      function (cb: () => void) {
+        const trace = traceCollector.getCurrentTrace()
+        if (
+          !trace ||
+          trace.status !== 'active' ||
+          traceCollector.isInternalAsync() ||
+          typeof cb !== 'function'
+        ) {
+          return origQueueMicrotask(cb)
+        }
 
-      traceCollector.recordAsyncTask('microtask')
-      ;(trace as any).pendingTasks = ((trace as any).pendingTasks || 0) + 1
+        traceCollector.recordAsyncTask('microtask')
+        trace.pendingTasks = (trace.pendingTasks || 0) + 1
 
-      return origQueueMicrotask(() => {
-        traceCollector.runWithTrace(trace, () => {
-          try {
-            cb()
-          } finally {
-            ;(trace as any).pendingTasks = Math.max(0, ((trace as any).pendingTasks || 0) - 1)
-            traceCollector.scheduleCompletion(trace)
-          }
+        return origQueueMicrotask(() => {
+          traceCollector.runWithTrace(trace, () => {
+            try {
+              cb()
+            } finally {
+              trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
+              traceCollector.scheduleCompletion(trace)
+            }
+          })
         })
-      })
-    }
+      },
+      applied
+    )
   }
 
   // 3. Intercept requestAnimationFrame
@@ -87,66 +118,94 @@ export function initAsyncTracking() {
     typeof window !== 'undefined' ? window : typeof globalThis !== 'undefined' ? globalThis : null
   if (globalTarget && typeof (globalTarget as any).requestAnimationFrame === 'function') {
     const origRaf = (globalTarget as any).requestAnimationFrame.bind(globalTarget)
-    ;(globalTarget as any).requestAnimationFrame = function (cb: (ts: number) => void) {
-      const trace = traceCollector.getCurrentTrace()
-      if (
-        !trace ||
-        trace.status !== 'active' ||
-        traceCollector.isInternalAsync() ||
-        typeof cb !== 'function'
-      ) {
-        return origRaf(cb)
-      }
+    patch(
+      globalTarget,
+      'requestAnimationFrame',
+      function (cb: (ts: number) => void) {
+        const trace = traceCollector.getCurrentTrace()
+        if (
+          !trace ||
+          trace.status !== 'active' ||
+          traceCollector.isInternalAsync() ||
+          typeof cb !== 'function'
+        ) {
+          return origRaf(cb)
+        }
 
-      traceCollector.recordAsyncTask('raf')
-      ;(trace as any).pendingTasks = ((trace as any).pendingTasks || 0) + 1
+        traceCollector.recordAsyncTask('raf')
+        trace.pendingTasks = (trace.pendingTasks || 0) + 1
 
-      return origRaf((ts: number) => {
-        traceCollector.runWithTrace(trace, () => {
-          try {
-            cb(ts)
-          } finally {
-            ;(trace as any).pendingTasks = Math.max(0, ((trace as any).pendingTasks || 0) - 1)
-            traceCollector.scheduleCompletion(trace)
-          }
+        return origRaf((ts: number) => {
+          traceCollector.runWithTrace(trace, () => {
+            try {
+              cb(ts)
+            } finally {
+              trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
+              traceCollector.scheduleCompletion(trace)
+            }
+          })
         })
-      })
-    }
+      },
+      applied
+    )
   }
 
   // 4. Intercept setTimeout (for <= 3000ms delays)
   if (typeof setTimeout !== 'undefined') {
     const origSetTimeout = setTimeout
     const targetObj = typeof window !== 'undefined' ? window : globalThis
-    ;(targetObj as any).setTimeout = function (cb: any, delay?: number, ...args: any[]) {
-      const numDelay = typeof delay === 'number' ? delay : 0
-      const trace = traceCollector.getCurrentTrace()
-      if (
-        !trace ||
-        trace.status !== 'active' ||
-        traceCollector.isInternalAsync() ||
-        typeof cb !== 'function' ||
-        numDelay > 3000
-      ) {
-        return origSetTimeout(cb, delay, ...args)
-      }
+    patch(
+      targetObj,
+      'setTimeout',
+      function (cb: any, delay?: number, ...args: any[]) {
+        const numDelay = typeof delay === 'number' ? delay : 0
+        const trace = traceCollector.getCurrentTrace()
+        if (
+          !trace ||
+          trace.status !== 'active' ||
+          traceCollector.isInternalAsync() ||
+          typeof cb !== 'function' ||
+          numDelay > MAX_TRACKED_DELAY_MS
+        ) {
+          return origSetTimeout(cb, delay, ...args)
+        }
 
-      traceCollector.recordAsyncTask('timeout')
-      ;(trace as any).pendingTasks = ((trace as any).pendingTasks || 0) + 1
+        traceCollector.recordAsyncTask('timeout')
+        trace.pendingTasks = (trace.pendingTasks || 0) + 1
 
-      return origSetTimeout((...cbArgs: any[]) => {
-        traceCollector.runWithTrace(trace, () => {
-          try {
-            cb(...cbArgs)
-          } finally {
-            ;(trace as any).pendingTasks = Math.max(0, ((trace as any).pendingTasks || 0) - 1)
-            traceCollector.scheduleCompletion(trace)
-          }
-        })
-      }, delay, ...args)
-    }
+        return origSetTimeout(
+          (...cbArgs: any[]) => {
+            traceCollector.runWithTrace(trace, () => {
+              try {
+                cb(...cbArgs)
+              } finally {
+                trace.pendingTasks = Math.max(0, (trace.pendingTasks || 0) - 1)
+                traceCollector.scheduleCompletion(trace)
+              }
+            })
+          },
+          delay,
+          ...args
+        )
+      },
+      applied
+    )
   }
+
+  patches = applied
 }
 
-// Auto-initialize async tracking
-initAsyncTracking()
+/** Restores every patched global. The collector itself is left untouched. */
+export function uninstallAsyncTracking(): void {
+  if (!patches) return
+
+  for (const { target, key, original } of patches) {
+    target[key] = original
+  }
+
+  patches = null
+}
+
+export function isAsyncTrackingInstalled(): boolean {
+  return patches !== null
+}

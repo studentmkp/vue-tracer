@@ -32,7 +32,7 @@ This repo is an npm workspaces monorepo at version `0.0.1`. Packages currently e
 | Package | Role |
 | --- | --- |
 | `@vue-reactive-trace/vite` | Vite plugin (`enforce: 'pre'`). Instruments `.vue` / `.ts` / `.js` before `@vitejs/plugin-vue` |
-| `@vue-reactive-trace/runtime` | Collector, registry, async context, redaction |
+| `@vue-reactive-trace/runtime` | Collector, registry, install/uninstall of tracing, redaction |
 | `@vue-reactive-trace/vue-adapter` | Vue plugin + Pinia store registration |
 | `@vue-reactive-trace/devtools-ui` | Floating overlay (`initDevTools()`) |
 | `playground` | Interactive demo of the full chain |
@@ -108,6 +108,27 @@ initDevTools()
 ```
 
 Call `app.use(pinia)` **before** the adapter so Pinia stores are registered. If Pinia is installed later, the adapter still wraps `app.use` and attaches its Pinia plugin.
+
+### When tracing starts
+
+`app.use(reactiveTraceVueAdapter)` is the single install path. Installing the adapter is what
+
+- patches `Promise.prototype.then`, `queueMicrotask`, `requestAnimationFrame`, and short `setTimeout`s so async work stays on the Trace that started it, and
+- attaches the capture-phase `click` / `input` / `change` / `submit` / `keydown` listeners that start interaction Traces.
+
+**Importing `@vue-reactive-trace/runtime` does none of this.** The collector, registry, transform helpers, and redaction are inert until something installs them, so a test — or any host that only wants mutations — can import the runtime without inheriting global patches or DOM listeners.
+
+Outside a Vue app, install the same two halves yourself:
+
+```ts
+import { installTracing, uninstallTracing } from '@vue-reactive-trace/runtime'
+
+installTracing()                        // async + interactions
+installTracing({ async: false })        // interactions only
+uninstallTracing()                      // restore every patched global
+```
+
+`setEnabled(false)` is still there, but it is a per-collector switch: recording is silenced while the patches and listeners stay in place. Use `uninstallTracing()` when you want the host globals genuinely untouched.
 
 ### 3. Third-party reactive state
 
