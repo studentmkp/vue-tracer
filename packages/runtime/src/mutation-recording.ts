@@ -194,6 +194,7 @@ export function recordInstrumentedMutation<T>(input: {
       reactiveId: identity.meta?.id,
       name: mutationName(identity, input.prop, input.nameMode),
       path: identity.path,
+      pathMode: input.pathMode,
       operation: input.operation,
       before,
       after: undefined,

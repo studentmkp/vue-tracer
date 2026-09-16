@@ -14,7 +14,8 @@ import type {
   TraceFilterOptions,
   TraceExportData,
   TraceConfidence,
-  TraceLevel
+  TraceLevel,
+  ComponentEventOptions
 } from './types'
 import { TraceSession, traceSession } from './session-lifecycle'
 
@@ -154,6 +155,7 @@ export function aggregateTraceEvents(
         after: last.after,
         source: first.source,
         affectedComponents: affected,
+        pathMode: first.pathMode,
         composable: first.composable,
         isExternal: first.isExternal,
         origin: first.origin,
@@ -178,6 +180,7 @@ class TraceCollector {
   private _activeMutation: MutationEvent | null = null
   private enabled: boolean = true
   private listeners: Set<(trace: Trace, allTraces: Trace[]) => void> = new Set()
+  private mutationIndex = new Map<number, MutationEvent>()
   private readonly session: TraceSession
 
   constructor(session: TraceSession = traceSession) {
@@ -218,6 +221,19 @@ class TraceCollector {
     this._activeMutation = mutation
   }
 
+  /**
+   * The mutation a component event should attach to. An explicit id from the
+   * caller (the Vue adapter resolves its own causes) wins; the active-mutation
+   * window is only the fallback for callers that do not resolve causality.
+   */
+  private resolveCause(options?: ComponentEventOptions): MutationEvent | null {
+    if (options && 'triggeredByMutationId' in options) {
+      const id = options.triggeredByMutationId
+      return id == null ? null : this.mutationIndex.get(id) ?? null
+    }
+    return this._activeMutation
+  }
+
   public getTraces(): Trace[] {
     return this.traces
   }
@@ -225,6 +241,7 @@ class TraceCollector {
   public clearTraces() {
     this.traces = []
     this._activeMutation = null
+    this.mutationIndex.clear()
     this.session.clear()
     this.notify()
   }
@@ -297,6 +314,7 @@ class TraceCollector {
     reactiveId?: string | number
     name?: string
     path?: string[]
+    pathMode?: MutationEvent['pathMode']
     operation: MutationEvent['operation']
     before: any
     after: any
@@ -329,6 +347,7 @@ class TraceCollector {
       reactiveId: data.reactiveId,
       name: data.name,
       path: data.path,
+      pathMode: data.pathMode,
       operation: data.operation,
       before: data.before,
       after: data.after,
@@ -346,20 +365,25 @@ class TraceCollector {
     }
 
     trace.events.push(mutationEvent)
+    this.mutationIndex.set(mutationEvent.id, mutationEvent)
     this.session.arm(trace)
     this.notify()
     return mutationEvent
   }
 
-  public recordComponentTrigger(componentName: string, file?: string): ComponentTriggerEvent | null {
+  public recordComponentTrigger(
+    componentName: string,
+    file?: string,
+    options?: ComponentEventOptions
+  ): ComponentTriggerEvent | null {
     const trace = this.session.current
     if (!trace) return null
 
-    const triggeredByMutationId = this._activeMutation?.id
+    const cause = this.resolveCause(options)
 
     // Associate component with the mutation that caused it
-    if (this._activeMutation && !this._activeMutation.affectedComponents.includes(componentName)) {
-      this._activeMutation.affectedComponents.push(componentName)
+    if (cause && !cause.affectedComponents.includes(componentName)) {
+      cause.affectedComponents.push(componentName)
     }
 
     const triggerEvent: ComponentTriggerEvent = {
@@ -368,7 +392,7 @@ class TraceCollector {
       type: 'component-trigger',
       componentName,
       file,
-      triggeredByMutationId,
+      triggeredByMutationId: cause?.id,
       timestamp: performance.now(),
       confidence: 'runtime'
     }
@@ -383,7 +407,8 @@ class TraceCollector {
     componentName: string,
     start: number,
     end: number,
-    file?: string
+    file?: string,
+    options?: ComponentEventOptions
   ): ComponentRenderEvent | null {
     const trace = this.session.current
     if (!trace) return null
@@ -397,7 +422,7 @@ class TraceCollector {
       start,
       end,
       duration: end - start,
-      triggeredByMutationId: this._activeMutation?.id,
+      triggeredByMutationId: this.resolveCause(options)?.id,
       confidence: 'runtime'
     }
 
@@ -549,6 +574,9 @@ class TraceCollector {
       for (const t of parsed.traces) {
         if (!this.traces.some((existing) => existing.id === t.id)) {
           this.traces.push(t)
+          for (const event of t.events) {
+            if (event.type === 'mutation') this.mutationIndex.set(event.id, event)
+          }
         }
       }
       if (parsed.traces.length > 0) {

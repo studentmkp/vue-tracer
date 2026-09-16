@@ -21,6 +21,7 @@ import {
   type MutationEvent,
   type ComputedEvent,
   type ComponentRenderEvent,
+  type ComponentTriggerEvent,
   type InteractionEvent,
   type WatchEvent,
   type AsyncTaskEvent,
@@ -200,6 +201,13 @@ state.profile.name = 'B'
       expect(renderEvt.componentName).toBe('App')
       expect(renderEvt.duration).toBeGreaterThanOrEqual(0)
       expect(btn.textContent).toBe('Count: 1')
+
+      // ✓ mutation → trigger and render correlation, owned by the adapter
+      const triggerEvt = trace.events.find((e) => e.type === 'component-trigger') as ComponentTriggerEvent
+      expect(triggerEvt).toBeDefined()
+      expect(triggerEvt.componentName).toBe('App')
+      expect(triggerEvt.triggeredByMutationId).toBe(mutationEvt.id)
+      expect(renderEvt.triggeredByMutationId).toBe(mutationEvt.id)
 
       // ✓ mutation → render correlation
       expect(mutationEvt.affectedComponents).toContain('App')

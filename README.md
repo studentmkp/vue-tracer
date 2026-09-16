@@ -20,7 +20,7 @@ This repo is an npm workspaces monorepo at version `0.0.1`. Packages currently e
 
 - **Exact source locations** for `ref`, `shallowRef`, `reactive`, `shallowReactive`, and `computed` declarations, plus assignments and mutating methods (`push`, `splice`, `Map.set`, …)
 - **Scope labels**: component-local (`<script setup>`), module-level globals, and `use*` composables
-- **Vue + Pinia**: render trigger/duration via a Vue plugin; Pinia stores registered automatically when present
+- **Vue + Pinia**: component trigger/render causality owned by the Vue adapter; Pinia stores registered automatically in either install order
 - **Async context**: traces stay tied to the interaction that started them across `await`, microtasks, and timers
 - **In-app overlay**: timeline + flow views, filters, aggregation of noisy mutation bursts, JSON export
 - **Open in editor**: click a location in the overlay to open VS Code, Cursor, or WebStorm
@@ -33,7 +33,7 @@ This repo is an npm workspaces monorepo at version `0.0.1`. Packages currently e
 | --- | --- |
 | `@vue-reactive-trace/vite` | Vite plugin (`enforce: 'pre'`). Instruments `.vue` / `.ts` / `.js` before `@vitejs/plugin-vue` |
 | `@vue-reactive-trace/runtime` | Collector, registry, install/uninstall of tracing, redaction |
-| `@vue-reactive-trace/vue-adapter` | Vue plugin + Pinia store registration |
+| `@vue-reactive-trace/vue-adapter` | Vue plugin: component causality + Pinia store registration |
 | `@vue-reactive-trace/devtools-ui` | Floating overlay (`initDevTools()`) |
 | `playground` | Interactive demo of the full chain |
 
@@ -107,7 +107,25 @@ app.mount('#app')
 initDevTools()
 ```
 
-Call `app.use(pinia)` **before** the adapter so Pinia stores are registered. If Pinia is installed later, the adapter still wraps `app.use` and attaches its Pinia plugin.
+Call `app.use(pinia)` **before** the adapter so Pinia stores are registered. If Pinia arrives later through `app.use(pinia)`, the adapter's wrapped `app.use` attaches its Pinia plugin then, and stores created before the plugin was attached are registered too.
+
+### Component causality
+
+The adapter owns the link from a mutation to the component it updates. Vue's `renderTriggered` hook names the dependency that fired the update, and the adapter resolves the recorded mutation that wrote it; the `updated` hook carries that id onto the render event. The correlation therefore does not depend on the collector's active-mutation window still being open when Vue flushes.
+
+The adapter reads the collector through a small interface (`ComponentCausalityRecorder`), so tests can assert mixin behaviour against a mock:
+
+```ts
+import { createComponentCausalityMixin } from '@vue-reactive-trace/vue-adapter'
+
+const mixin = createComponentCausalityMixin(mockCollector)
+```
+
+or inject one when installing:
+
+```ts
+app.use(reactiveTraceVueAdapter, { collector: mockCollector })
+```
 
 ### When tracing starts
 

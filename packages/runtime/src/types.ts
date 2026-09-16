@@ -43,6 +43,11 @@ export interface MutationEvent {
   name?: string
   rootName?: string
   path?: string[]
+  /**
+   * How to read `path`: the write target's property path, or the path *to* a
+   * mutated collection (Map, Set, array) whose key is not part of the path.
+   */
+  pathMode?: 'property' | 'collection'
   operation: MutationOperation
   before: any
   after: any
@@ -108,6 +113,7 @@ export interface AggregatedMutationGroup {
   after: any
   source: SourceLocation
   affectedComponents: string[]
+  pathMode?: 'property' | 'collection'
   composable?: string
   isExternal?: boolean
   origin?: string
@@ -139,6 +145,15 @@ export interface ComponentRenderEvent {
   duration: number
   triggeredByMutationId?: number
   confidence?: TraceConfidence
+}
+
+/**
+ * Causality carried on component events. When `triggeredByMutationId` is present
+ * (including explicitly `undefined`), the caller owns the correlation and the
+ * collector's active-mutation window is not consulted.
+ */
+export interface ComponentEventOptions {
+  triggeredByMutationId?: number
 }
 
 export interface InteractionEvent {
