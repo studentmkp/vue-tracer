@@ -176,4 +176,45 @@ describe('§36 plugin ordering and §35 source map chain', () => {
     },
     60_000
   )
+
+  it(
+    'wires open-source endpoint through configureServer middleware',
+    async () => {
+      await withServer([reactiveTrace({ editor: 'cursor' })], async (server) => {
+        let statusCode = 0
+        let responseBody = ''
+        const req: any = {
+          method: 'GET',
+          url: '/__reactive-trace/open-source?file=src/marker.ts&line=6&column=1',
+          headers: { host: 'localhost' }
+        }
+        const res: any = {
+          statusCode: 0,
+          setHeader: () => {},
+          end: (body: string) => {
+            statusCode = res.statusCode
+            responseBody = body
+          }
+        }
+
+        const traceMiddleware = server.middlewares.stack.find((s) =>
+          s.handle.toString().includes('__reactive-trace')
+        )
+        expect(traceMiddleware).toBeDefined()
+
+        let nextCalled = false
+        ;(traceMiddleware!.handle as any)(req, res, () => {
+          nextCalled = true
+        })
+
+        expect(nextCalled).toBe(false)
+        expect(statusCode).toBe(200)
+        const parsed = JSON.parse(responseBody)
+        expect(parsed.success).toBe(true)
+        expect(parsed.targetPath).toBe(resolve(fixtureRoot, 'src/marker.ts'))
+        expect(parsed.command).toContain('cursor -g')
+      })
+    },
+    30_000
+  )
 })
