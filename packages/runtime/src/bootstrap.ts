@@ -1,11 +1,14 @@
 import { installAsyncTracking, uninstallAsyncTracking } from './async-context'
 import { installInteractionCapture, uninstallInteractionCapture } from './interaction-capture'
+import { collectorRecorder, type TraceRecorder } from './recorder'
 
 export interface InstallTracingOptions {
   /** Adopt Promise/microtask/rAF/timeout continuations into the active Trace. */
   async?: boolean
   /** Listen for click/input/change/submit/keydown on `document`. */
   interactions?: boolean
+  /** Recording seam used by every installed integration. */
+  recorder?: TraceRecorder
 }
 
 /**
@@ -15,10 +18,10 @@ export interface InstallTracingOptions {
  * the Vue adapter, which calls it for you).
  */
 export function installTracing(options: InstallTracingOptions = {}): void {
-  const { async: asyncTracking = true, interactions = true } = options
+  const { async: asyncTracking = true, interactions = true, recorder = collectorRecorder } = options
 
-  if (asyncTracking) installAsyncTracking()
-  if (interactions) installInteractionCapture()
+  if (asyncTracking) installAsyncTracking(recorder)
+  if (interactions) installInteractionCapture(recorder)
 }
 
 /** Undoes whatever `installTracing` installed. */

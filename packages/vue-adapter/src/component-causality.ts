@@ -1,27 +1,19 @@
 import { toRaw } from 'vue'
-import type { ComponentEventOptions, MutationEvent, Trace } from '@vue-reactive-trace/runtime'
+import type {
+  MutationEvent,
+  Trace,
+  TraceRecorder
+} from '@vue-reactive-trace/runtime'
 
 /**
  * The recorder seam the Vue adapter needs: enough to read the Trace being recorded
- * and to attach component events to it. `traceCollector` satisfies this; tests pass
- * a mock so mixin behaviour is asserted without a playground session.
+ * and to attach component events to it. Both the production collector adapter and
+ * the in-memory test adapter satisfy this narrower view.
  */
-export interface ComponentCausalityRecorder {
-  isEnabled(): boolean
-  getCurrentTrace(): Trace | null
-  recordComponentTrigger(
-    componentName: string,
-    file?: string,
-    options?: ComponentEventOptions
-  ): unknown
-  recordComponentRender(
-    componentName: string,
-    start: number,
-    end: number,
-    file?: string,
-    options?: ComponentEventOptions
-  ): unknown
-}
+export type ComponentCausalityRecorder = Pick<
+  TraceRecorder,
+  'isEnabled' | 'getCurrentTrace' | 'recordComponentTrigger' | 'recordComponentRender'
+>
 
 /** The subset of Vue's `renderTriggered` debug event the adapter reads. */
 export interface RenderTriggeredEvent {

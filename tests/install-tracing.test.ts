@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick } from 'vue'
 import {
   traceCollector,
+  InMemoryTraceRecorder,
   __trace_register,
   __trace_set,
   installTracing,
@@ -192,6 +193,26 @@ describe('§3 — explicit install / uninstall', () => {
     btn.remove()
   })
 
+  it('records interactions through an injected in-memory recorder', () => {
+    const recorder = new InMemoryTraceRecorder()
+    installTracing({ async: false, recorder })
+
+    const btn = document.createElement('button')
+    btn.textContent = 'Save'
+    document.body.appendChild(btn)
+    btn.click()
+
+    expect(recorder.traces).toHaveLength(1)
+    expect(recorder.traces[0].trigger).toMatchObject({
+      type: 'interaction',
+      event: 'click',
+      targetTag: 'button',
+      targetText: 'Save'
+    })
+    expect(traceCollector.getTraces()).toHaveLength(0)
+    btn.remove()
+  })
+
   it('propagates a trace across a timer only after async install', async () => {
     const state = __trace_register({ n: 0 }, { name: 'state', type: 'reactive' })
 
@@ -211,6 +232,21 @@ describe('§3 — explicit install / uninstall', () => {
     expect(trace.events.some((e) => e.type === 'async' && e.taskType === 'timeout')).toBe(true)
 
     uninstallAsyncTracking()
+  })
+
+  it('records async adoption through an injected in-memory recorder', async () => {
+    const recorder = new InMemoryTraceRecorder()
+    const trace = recorder.startInteractionTrace('click')!
+    installAsyncTracking(recorder)
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5)
+    })
+
+    expect(trace.events).toContainEqual(
+      expect.objectContaining({ type: 'async', taskType: 'timeout', traceId: trace.id })
+    )
+    expect(traceCollector.getTraces()).toHaveLength(0)
   })
 })
 

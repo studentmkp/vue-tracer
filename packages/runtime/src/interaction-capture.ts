@@ -1,4 +1,4 @@
-import { traceCollector } from './collector'
+import { collectorRecorder, type TraceRecorder } from './recorder'
 
 /** Events that start an interaction Trace. Listeners are attached in capture phase. */
 export const INTERACTION_EVENTS = ['click', 'input', 'change', 'submit', 'keydown'] as const
@@ -12,9 +12,9 @@ interface AttachedListener {
 
 let attached: AttachedListener[] | null = null
 
-function createHandler(eventName: InteractionEventName) {
+function createHandler(eventName: InteractionEventName, recorder: TraceRecorder) {
   return (event: Event) => {
-    if (!traceCollector.isEnabled()) return
+    if (!recorder.isEnabled()) return
 
     const target = event.target as HTMLElement | null
     // Avoid tracking devtool internal events
@@ -22,7 +22,7 @@ function createHandler(eventName: InteractionEventName) {
       return
     }
 
-    traceCollector.startInteractionTrace(eventName, target)
+    recorder.startInteractionTrace(eventName, target)
   }
 }
 
@@ -30,12 +30,12 @@ function createHandler(eventName: InteractionEventName) {
  * Starts capturing click/input/change/submit/keydown as interaction Traces.
  * Idempotent, and a no-op outside a DOM environment.
  */
-export function installInteractionCapture(): void {
+export function installInteractionCapture(recorder: TraceRecorder = collectorRecorder): void {
   if (attached) return
   if (typeof window === 'undefined' || typeof document === 'undefined') return
 
   attached = INTERACTION_EVENTS.map((type) => {
-    const handler = createHandler(type)
+    const handler = createHandler(type, recorder)
     document.addEventListener(type, handler, true)
     return { type, handler }
   })

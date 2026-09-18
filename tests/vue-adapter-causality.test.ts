@@ -3,6 +3,7 @@ import { createApp, defineComponent, h, nextTick, reactive, toRaw } from 'vue'
 import { createPinia, defineStore } from 'pinia'
 import {
   traceCollector,
+  InMemoryTraceRecorder,
   getReactiveMeta,
   queryTraceView,
   uninstallTracing,
@@ -136,6 +137,35 @@ describe('Vue adapter owns component causality', () => {
     expect(mock.renders[0].triggeredByMutationId).toBe(7)
     expect(mock.renders[0].start).toBeTypeOf('number')
     expect(mock.renders[0].end).toBeGreaterThanOrEqual(mock.renders[0].start)
+  })
+
+  it('records component causality through the shared in-memory recorder', () => {
+    const state = reactive({ count: 0 })
+    const mutation = mutationEvent({ id: 7, target: state, path: ['count'] })
+    const trace = traceWith(mutation)
+    const recorder = new InMemoryTraceRecorder({ currentTrace: trace })
+    const mixin = createComponentCausalityMixin(recorder)
+    const vm = createVm()
+
+    mixin.renderTriggered.call(vm, { target: toRaw(state), key: 'count' })
+    mixin.beforeUpdate.call(vm)
+    mixin.updated.call(vm)
+
+    expect(trace.events).toContainEqual(
+      expect.objectContaining({
+        type: 'component-trigger',
+        componentName: 'CartView',
+        triggeredByMutationId: mutation.id
+      })
+    )
+    expect(trace.events).toContainEqual(
+      expect.objectContaining({
+        type: 'component-render',
+        componentName: 'CartView',
+        triggeredByMutationId: mutation.id
+      })
+    )
+    expect(mutation.affectedComponents).toContain('CartView')
   })
 
   it('attributes collection mutators by target when the path does not name the triggered key', () => {

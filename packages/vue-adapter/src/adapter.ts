@@ -1,16 +1,18 @@
 import type { App, ComponentOptions, Plugin } from 'vue'
-import { traceCollector, registerReactive, installTracing } from '@vue-reactive-trace/runtime'
 import {
-  createComponentCausalityMixin,
-  type ComponentCausalityRecorder
-} from './component-causality'
+  collectorRecorder,
+  registerReactive,
+  installTracing,
+  type TraceRecorder
+} from '@vue-reactive-trace/runtime'
+import { createComponentCausalityMixin } from './component-causality'
 
 export interface VueAdapterOptions {
   /**
-   * Collector seam. Defaults to the runtime's singleton collector; tests inject a
-   * mock so mixin behaviour can be asserted without a playground session.
+   * Recorder seam. Defaults to the production collector adapter; tests can inject
+   * an in-memory recorder without touching the collector singleton.
    */
-  collector?: ComponentCausalityRecorder
+  recorder?: TraceRecorder
 }
 
 const tracedStores = new WeakSet<object>()
@@ -84,9 +86,9 @@ function registerPiniaTraces(value: unknown): void {
 export const reactiveTraceVueAdapter: Plugin<[VueAdapterOptions?]> = {
   install(app: App, options: VueAdapterOptions = {}) {
     // Tracing starts here: this is the documented single install path.
-    installTracing()
+    const recorder = options.recorder ?? collectorRecorder
+    installTracing({ recorder })
 
-    const recorder = options.collector ?? traceCollector
     app.mixin(createComponentCausalityMixin(recorder) as ComponentOptions)
 
     // Pinia may already be installed when the adapter arrives…

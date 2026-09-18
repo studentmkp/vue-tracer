@@ -116,18 +116,21 @@ Call `app.use(pinia)` **before** the adapter so Pinia stores are registered. If 
 
 The adapter owns the link from a mutation to the component it updates. Vue's `renderTriggered` hook names the dependency that fired the update, and the adapter resolves the recorded mutation that wrote it; the `updated` hook carries that id onto the render event. The correlation therefore does not depend on the collector's active-mutation window still being open when Vue flushes.
 
-The adapter reads the collector through a small interface (`ComponentCausalityRecorder`), so tests can assert mixin behaviour against a mock:
+The adapter records through the runtime's small `TraceRecorder` seam. Tests can use
+`InMemoryTraceRecorder` without intercepting writes to the collector singleton:
 
 ```ts
+import { InMemoryTraceRecorder } from '@vue-reactive-trace/runtime'
 import { createComponentCausalityMixin } from '@vue-reactive-trace/vue-adapter'
 
-const mixin = createComponentCausalityMixin(mockCollector)
+const recorder = new InMemoryTraceRecorder({ currentTrace: trace })
+const mixin = createComponentCausalityMixin(recorder)
 ```
 
 or inject one when installing:
 
 ```ts
-app.use(reactiveTraceVueAdapter, { collector: mockCollector })
+app.use(reactiveTraceVueAdapter, { recorder })
 ```
 
 ### When tracing starts
@@ -146,6 +149,7 @@ import { installTracing, uninstallTracing } from '@vue-reactive-trace/runtime'
 
 installTracing()                        // async + interactions
 installTracing({ async: false })        // interactions only
+installTracing({ recorder })            // record through an injected adapter
 uninstallTracing()                      // restore every patched global
 ```
 
