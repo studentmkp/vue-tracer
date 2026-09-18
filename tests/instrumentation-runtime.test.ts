@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import {
   traceCollector,
   __trace_register,
@@ -7,6 +7,13 @@ import {
   __trace_update,
   __trace_call,
   __trace_delete,
+  getReactiveMeta,
+  isRegisteredReactive,
+  isVueReactive,
+  isRecordableReactive,
+  shouldRecordMutation,
+  registerReactive,
+  registerExternalReactive,
   type MutationEvent
 } from '@vue-reactive-trace/runtime'
 
@@ -98,4 +105,100 @@ describe('instrumentation runtime', () => {
     expect(mutations[3].path).toEqual(['extra'])
     expect(mutations[3].after).toBeUndefined()
   })
+
+  describe('Registry lookup vs Mutation policy (Issue #14)', () => {
+    it('getReactiveMeta does not mutate registry (no auto-register on get)', () => {
+      const plainRef = ref(42)
+      const plainReactive = reactive({ foo: 'bar' })
+
+      // Initially not registered
+      expect(isRegisteredReactive(plainRef)).toBe(false)
+      expect(isRegisteredReactive(plainReactive)).toBe(false)
+
+      // Querying getReactiveMeta returns undefined
+      expect(getReactiveMeta(plainRef)).toBeUndefined()
+      expect(getReactiveMeta(plainReactive)).toBeUndefined()
+
+      // Registry lookup must not mutate: still not registered
+      expect(isRegisteredReactive(plainRef)).toBe(false)
+      expect(isRegisteredReactive(plainReactive)).toBe(false)
+    })
+
+    it('isRegisteredReactive is not true for any Vue reactive, allowing callers to tell instrumented vs unregistered without recording a write', () => {
+      const unregisteredRef = ref(1)
+      const unregisteredObj = reactive({ count: 1 })
+      const registeredRef = registerReactive(ref(2), { name: 'regRef' })
+      const externalRef = registerExternalReactive(ref(3), { name: 'extRef', origin: 'pinia' })
+      const plainObj = { count: 1 }
+
+      expect(isRegisteredReactive(unregisteredRef)).toBe(false)
+      expect(isRegisteredReactive(unregisteredObj)).toBe(false)
+      expect(isRegisteredReactive(plainObj)).toBe(false)
+
+      expect(isRegisteredReactive(registeredRef)).toBe(true)
+      expect(isRegisteredReactive(externalRef)).toBe(true)
+      expect(getReactiveMeta(registeredRef)?.name).toBe('regRef')
+      expect(getReactiveMeta(externalRef)?.origin).toBe('pinia')
+    })
+
+    it('answers “Will this write record?” without auto-registering or mutating the registry', () => {
+      const unregisteredState = reactive({ a: 1 })
+      const plainObj = { a: 1 }
+      const instrumentedState = __trace_register(reactive({ a: 1 }), { name: 'myState' })
+
+      expect(isRecordableReactive(unregisteredState)).toBe(true)
+      expect(isRecordableReactive(instrumentedState)).toBe(true)
+      expect(isRecordableReactive(plainObj)).toBe(false)
+
+      expect(shouldRecordMutation(unregisteredState)).toBe(true)
+      expect(shouldRecordMutation(instrumentedState)).toBe(true)
+      expect(shouldRecordMutation(plainObj)).toBe(false)
+
+      // When collector is disabled
+      traceCollector.setEnabled(false)
+      expect(shouldRecordMutation(unregisteredState)).toBe(false)
+      expect(shouldRecordMutation(instrumentedState)).toBe(false)
+      traceCollector.setEnabled(true)
+
+      // Calling shouldRecordMutation or isRecordableReactive does NOT register unregisteredState
+      expect(isRegisteredReactive(unregisteredState)).toBe(false)
+      expect(getReactiveMeta(unregisteredState)).toBeUndefined()
+    })
+
+    it('mutation recording preserves unregistered status in registry while recording external labels and keeping consistent reactiveId', () => {
+      const externalState = reactive({ count: 0 })
+      traceCollector.startTrace({ type: 'manual', event: 'policy-test' })
+
+      expect(isRegisteredReactive(externalState)).toBe(false)
+
+      __trace_set(externalState, 'count', 1, loc)
+      __trace_update(externalState, 'count', '++', false, loc)
+
+      const trace = traceCollector.getCurrentTrace()!
+      const mutations = trace.events.filter((e): e is MutationEvent => e.type === 'mutation')
+      expect(mutations).toHaveLength(2)
+
+      // Registration is explicit: recording a write does NOT auto-register in the registry
+      expect(isRegisteredReactive(externalState)).toBe(false)
+      expect(getReactiveMeta(externalState)).toBeUndefined()
+
+      // Mutation recording owns the external policy
+      for (const m of mutations) {
+        expect(m.isExternal).toBe(true)
+        expect(m.origin).toBe('external')
+        expect(m.traceLevel).toBe('partial')
+        expect(m.confidence).toBe('inferred')
+        expect(m.scope).toBe('local')
+      }
+
+      // Both writes share the same synthetic reactiveId
+      expect(mutations[0].reactiveId).toBeDefined()
+      expect(mutations[0].reactiveId).toBe(mutations[1].reactiveId)
+      expect(mutations[0].before).toBe(0)
+      expect(mutations[0].after).toBe(1)
+      expect(mutations[1].before).toBe(1)
+      expect(mutations[1].after).toBe(2)
+    })
+  })
 })
+

@@ -1,4 +1,4 @@
-import { toRaw, isRef, isReactive, isProxy } from 'vue'
+import { toRaw, isRef, isReactive } from 'vue'
 import type { ReactiveMetadata } from './types'
 
 const registry = new WeakMap<object, ReactiveMetadata>()
@@ -134,21 +134,6 @@ export function getReactiveMeta(target: unknown): ReactiveMetadata | undefined {
     }
   }
 
-  // If not explicitly registered via AST declaration, but is a Vue reactive/ref at runtime
-  if (!meta && (isRef(target) || isReactive(target) || isProxy(target))) {
-    const inferredType = isRef(target) ? 'ref' : 'reactive'
-    meta = {
-      id: `reactive_auto_${idCounter++}`,
-      name: 'anonymous',
-      type: inferredType,
-      scope: 'local',
-      isExternal: true,
-      origin: 'external',
-      traceLevel: 'partial'
-    }
-    registry.set(target, meta)
-  }
-
   return meta
 }
 
@@ -156,5 +141,11 @@ export function isRegisteredReactive(target: unknown): boolean {
   if (!isReactiveCandidate(target)) {
     return false
   }
-  return isRef(target) || isReactive(target) || registry.has(target) || registry.has(toRaw(target)) || childToParentMap.has(target) || childToParentMap.has(toRaw(target))
+  const raw = toRaw(target)
+  return (
+    registry.has(target) ||
+    registry.has(raw) ||
+    childToParentMap.has(target) ||
+    childToParentMap.has(raw)
+  )
 }

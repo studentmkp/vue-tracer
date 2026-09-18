@@ -1,8 +1,9 @@
-import { toRaw } from 'vue'
+import { toRaw, isRef, isReactive, isProxy } from 'vue'
 import { traceCollector } from './collector'
 import {
   getReactiveMeta,
   getReactivePathAndRoot,
+  isReactiveCandidate,
   isRegisteredReactive,
   registerReactive
 } from './registry'
@@ -87,6 +88,8 @@ interface MutationIdentity {
   meta?: ReactiveMetadata | null
   rootName?: string
   path: string[]
+  isRuntimeExternal?: boolean
+  reactiveId?: string | number
 }
 
 interface TracedWrite<T> {
@@ -195,20 +198,69 @@ export function safeClone(
   }
 }
 
+export function isVueReactive(val: unknown): val is object {
+  return isReactiveCandidate(val) && (isRef(val) || isReactive(val) || isProxy(val))
+}
+
+/**
+ * Answers whether this reactive target is eligible to be recorded as a Mutation.
+ * Either it is an explicitly registered reactive (instrumented or external) or a
+ * runtime-discovered external Vue reactive.
+ * Does not mutate the registry or trigger auto-registration.
+ */
+export function isRecordableReactive(target: unknown): boolean {
+  return isRegisteredReactive(target) || isVueReactive(target)
+}
+
+/**
+ * Answers “Will this write record?” without mutating the registry or auto-registering.
+ */
+export function shouldRecordMutation(target: unknown): boolean {
+  return traceCollector.isEnabled() && isRecordableReactive(target)
+}
+
+let externalIdCounter = 1
+const externalTargetIdMap = new WeakMap<object, string>()
+
+function getExternalReactiveId(target: object): string {
+  const raw = toRaw(target)
+  let id = externalTargetIdMap.get(target) || externalTargetIdMap.get(raw)
+  if (!id) {
+    id = `reactive_auto_${externalIdCounter++}`
+    externalTargetIdMap.set(target, id)
+    if (raw !== target) {
+      externalTargetIdMap.set(raw, id)
+    }
+  }
+  return id
+}
+
 type MutationMetadataFields = Pick<
   MutationEvent,
   'composable' | 'isExternal' | 'origin' | 'traceLevel' | 'confidence' | 'scope' | 'declaredAt'
 >
 
-function mutationFieldsFromMeta(meta?: ReactiveMetadata | null): MutationMetadataFields {
+function mutationFieldsFromIdentity(identity: MutationIdentity): MutationMetadataFields {
+  const { meta } = identity
+  if (meta) {
+    return {
+      composable: meta.composable,
+      isExternal: meta.isExternal,
+      origin: meta.origin,
+      traceLevel: meta.traceLevel,
+      confidence: meta.isExternal ? 'inferred' : 'exact',
+      scope: meta.scope,
+      declaredAt: meta.source
+    }
+  }
   return {
-    composable: meta?.composable,
-    isExternal: meta?.isExternal,
-    origin: meta?.origin,
-    traceLevel: meta?.traceLevel,
-    confidence: meta?.isExternal ? 'inferred' : 'exact',
-    scope: meta?.scope,
-    declaredAt: meta?.source
+    composable: undefined,
+    isExternal: true,
+    origin: 'external',
+    traceLevel: 'partial',
+    confidence: 'inferred',
+    scope: 'local',
+    declaredAt: undefined
   }
 }
 
@@ -219,8 +271,13 @@ function resolveMutationIdentity(
   pathMode: 'property' | 'collection'
 ): MutationIdentity {
   const meta = getReactiveMeta(target)
+  const isRuntimeExternal = !meta && isVueReactive(target)
   const pathAndRoot = getReactivePathAndRoot(target)
-  const rootName = options?.rootName || pathAndRoot?.rootName || meta?.name
+  const rootName =
+    options?.rootName ||
+    pathAndRoot?.rootName ||
+    meta?.name ||
+    (isRuntimeExternal ? 'anonymous' : undefined)
   const path =
     options?.path ||
     (pathMode === 'property'
@@ -228,7 +285,9 @@ function resolveMutationIdentity(
         ? [...pathAndRoot.pathPrefix, String(prop)]
         : [String(prop)]
       : pathAndRoot?.pathPrefix || [])
-  return { target, meta, rootName, path }
+  const reactiveId = meta?.id || (isRuntimeExternal ? getExternalReactiveId(target) : undefined)
+
+  return { target, meta, rootName, path, isRuntimeExternal, reactiveId }
 }
 
 function mutationName(identity: MutationIdentity, prop: any, nameMode: 'root' | 'qualified'): string {
@@ -240,7 +299,7 @@ function mutationName(identity: MutationIdentity, prop: any, nameMode: 'root' | 
         : rootName
       : meta?.name || 'anonymous'
   }
-  return rootName || meta?.name || String(prop)
+  return rootName || meta?.name || (prop !== undefined ? String(prop) : 'anonymous')
 }
 
 /**
@@ -259,7 +318,7 @@ function recordInstrumentedMutation<T>(input: {
   traced: (identity: MutationIdentity) => TracedWrite<T>
 }): T {
   const { target } = input
-  if (!traceCollector.isEnabled() || !isRegisteredReactive(target)) {
+  if (!shouldRecordMutation(target)) {
     return input.untraced()
   }
 
@@ -269,7 +328,7 @@ function recordInstrumentedMutation<T>(input: {
 
   try {
     mutationEvent = traceCollector.recordMutation({
-      reactiveId: identity.meta?.id,
+      reactiveId: identity.reactiveId,
       name: mutationName(identity, input.prop, input.nameMode),
       path: identity.path,
       pathMode: input.pathMode,
@@ -278,7 +337,7 @@ function recordInstrumentedMutation<T>(input: {
       after: undefined,
       source: input.source,
       target,
-      ...mutationFieldsFromMeta(identity.meta)
+      ...mutationFieldsFromIdentity(identity)
     })
     traceCollector.setActiveMutation(mutationEvent)
 
