@@ -38,12 +38,7 @@ export interface RedactConfig {
   disabled?: boolean
 }
 
-export interface RuntimeRedactConfig {
-  redact?: RedactMatcher[]
-}
-
 let config: RedactConfig = {}
-let lastConfigureKey = ''
 
 /** 由插件注入或使用者手動呼叫 */
 export function configureRedact(next: RedactConfig): void {
@@ -52,7 +47,6 @@ export function configureRedact(next: RedactConfig): void {
 
 export function resetRedact(): void {
   config = {}
-  lastConfigureKey = ''
 }
 
 /** 將 '**.token' / 'password' / 'user.*.secret' 轉為比對函式 */
@@ -61,22 +55,6 @@ function compileMatcher(pattern: string): (ctx: RedactContext) => boolean {
   const leaf = parts[parts.length - 1] ?? ''
   const normalizedLeaf = normalize(leaf)
   return (ctx) => normalize(ctx.key) === normalizedLeaf
-}
-
-function configureKey(next: RuntimeRedactConfig): string {
-  return JSON.stringify({
-    redact: next.redact?.map((m) => (typeof m === 'function' ? m.toString() : m))
-  })
-}
-
-/** Idempotent redaction configuration injected by the Vite transform. */
-export function __trace_configure(next: RuntimeRedactConfig): void {
-  const key = configureKey(next)
-  if (key === lastConfigureKey) return
-  lastConfigureKey = key
-  if (next.redact !== undefined) {
-    configureRedact({ matchers: next.redact })
-  }
 }
 
 /**

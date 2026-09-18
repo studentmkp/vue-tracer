@@ -94,7 +94,8 @@ export function transformCode(
   return null
 }
 
-const RUNTIME_HELPER_IMPORTS = [
+const RUNTIME_HELPER_NAMES = [
+  '__trace_configure',
   '__trace_register',
   '__trace_register_computed',
   '__trace_set',
@@ -102,7 +103,8 @@ const RUNTIME_HELPER_IMPORTS = [
   '__trace_call',
   '__trace_delete',
   '__trace_watch_cb'
-]
+] as const
+const [CONFIGURE_HELPER, ...RUNTIME_HELPER_IMPORTS] = RUNTIME_HELPER_NAMES
 
 function serializeRedactMatcher(
   matcher: string | ((value: unknown, ctx: RedactContext) => unknown)
@@ -111,31 +113,28 @@ function serializeRedactMatcher(
 }
 
 export function buildConfigureCall(options: TransformOptions): string {
-  const calls: string[] = []
-
-  if (options.events !== undefined || options.maxMemoryMB !== undefined) {
-    const fields: string[] = []
-    if (options.events !== undefined) fields.push(`events: ${JSON.stringify(options.events)}`)
-    if (options.maxMemoryMB !== undefined) {
-      fields.push(`maxMemoryMB: ${JSON.stringify(options.maxMemoryMB)}`)
-    }
-    calls.push(`traceCollector.configureRecording({ ${fields.join(', ')} });`)
-  }
-
+  const fields: string[] = []
   if (options.redact !== undefined) {
     const items = options.redact.map(serializeRedactMatcher)
-    calls.push(`__trace_configure({ redact: [${items.join(', ')}] });`)
+    fields.push(`redact: [${items.join(', ')}]`)
+  }
+  if (options.events !== undefined) fields.push(`events: ${JSON.stringify(options.events)}`)
+  if (options.maxMemoryMB !== undefined) {
+    fields.push(`maxMemoryMB: ${JSON.stringify(options.maxMemoryMB)}`)
   }
 
-  return calls.length > 0 ? `${calls.join('\n')}\n` : ''
+  return fields.length > 0 ? `${CONFIGURE_HELPER}({ ${fields.join(', ')} });\n` : ''
 }
 
 function runtimePreamble(options: TransformOptions): string {
-  const imports = [...RUNTIME_HELPER_IMPORTS]
-  if (options.events !== undefined || options.maxMemoryMB !== undefined) {
-    imports.push('traceCollector')
+  const imports: string[] = [...RUNTIME_HELPER_IMPORTS]
+  if (
+    options.redact !== undefined ||
+    options.events !== undefined ||
+    options.maxMemoryMB !== undefined
+  ) {
+    imports.push(CONFIGURE_HELPER)
   }
-  if (options.redact !== undefined) imports.push('__trace_configure')
   return `import { ${imports.join(', ')} } from '@vue-reactive-trace/runtime';\n${buildConfigureCall(options)}`
 }
 

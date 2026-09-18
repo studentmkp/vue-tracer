@@ -606,35 +606,36 @@ describe('bounded trace retention — overlay and export consistency', () => {
 })
 
 describe('bounded trace retention — plugin config injection', () => {
-  it('emits one configureRecording call carrying events and maxMemoryMB, with redaction separate', () => {
+  it('emits one runtime helper call carrying recording and redaction config', () => {
     const call = buildConfigureCall({
       events: ['mutation'],
       maxMemoryMB: 25,
       redact: ['**.token']
     })
 
-    expect(call.match(/configureRecording\(/g)).toHaveLength(1)
-    expect(call).toContain('traceCollector.configureRecording({ events: ["mutation"], maxMemoryMB: 25 });')
-    expect(call).toContain('__trace_configure({ redact: ["**.token"] });')
+    expect(call.match(/__trace_configure\(/g)).toHaveLength(1)
+    expect(call).toContain(
+      '__trace_configure({ redact: ["**.token"], events: ["mutation"], maxMemoryMB: 25 });'
+    )
+    expect(call).not.toContain('traceCollector')
   })
 
-  it('emits the collector call when only maxMemoryMB is set', () => {
+  it('emits the runtime helper call when only maxMemoryMB is set', () => {
     const call = buildConfigureCall({ maxMemoryMB: 10 })
 
-    expect(call).toContain('traceCollector.configureRecording({ maxMemoryMB: 10 });')
-    expect(call).not.toContain('__trace_configure')
+    expect(call).toContain('__trace_configure({ maxMemoryMB: 10 });')
+    expect(call).not.toContain('traceCollector')
   })
 
-  it('injects collector config into transformed modules that only set maxMemoryMB', () => {
+  it('injects runtime config into transformed modules that only set maxMemoryMB', () => {
     const result = transformCode('const count = ref(0)\n', '/src/App.ts', {
       root: '/src',
       maxMemoryMB: 10
     })
 
     expect(result).not.toBeNull()
-    expect(result!.code).toContain('traceCollector')
-    expect(result!.code).toContain('configureRecording({ maxMemoryMB: 10 })')
-    expect(result!.code).not.toContain('__trace_configure')
+    expect(result!.code).toContain('__trace_configure({ maxMemoryMB: 10 })')
+    expect(result!.code).not.toContain('traceCollector')
   })
 
   it('re-applying the same recording config is idempotent', () => {

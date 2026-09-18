@@ -272,21 +272,19 @@ describe('Vite events option injection', () => {
       redact: ['**.token']
     })
     expect(call).toContain(
-      'traceCollector.configureRecording({ events: ["mutation","component-render"] });'
+      '__trace_configure({ redact: ["**.token"], events: ["mutation","component-render"] });'
     )
-    expect(call).toContain('__trace_configure({ redact: ["**.token"] });')
-    expect(call).not.toContain('redact: ["**.token"], events')
+    expect(call).not.toContain('traceCollector')
   })
 
-  it('imports and configures the collector when a transformed module sets events', () => {
+  it('imports and calls the runtime helper when a transformed module sets events', () => {
     const result = transformCode('const count = ref(0)\n', '/src/App.ts', {
       root: '/src',
       events: ['mutation']
     })
 
     expect(result).not.toBeNull()
-    expect(result!.code).toContain('traceCollector')
-    expect(result!.code).toContain('configureRecording({ events: ["mutation"] })')
-    expect(result!.code).not.toContain('__trace_configure')
+    expect(result!.code).toContain('__trace_configure({ events: ["mutation"] })')
+    expect(result!.code).not.toContain('traceCollector')
   })
 })

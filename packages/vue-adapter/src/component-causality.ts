@@ -99,7 +99,7 @@ function getComponentInfo(vm: any): { name: string; file?: string } {
  * `renderTriggered` is Vue's own report of which dependency fired the update, so the
  * adapter resolves the causing mutation at trigger time and carries it to the
  * `updated` hook. The collector's active-mutation window is never read: correlation
- * holds even though the window closes in `recordInstrumentedMutation`'s finally-block
+ * holds even though the instrumentation runtime closes its active window after the write
  * long before Vue flushes the render.
  */
 export function createComponentCausalityMixin(

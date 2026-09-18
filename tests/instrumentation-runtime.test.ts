@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { reactive } from 'vue'
 import {
   traceCollector,
-  recordInstrumentedMutation,
   __trace_register,
   __trace_set,
   __trace_update,
@@ -13,7 +12,7 @@ import {
 
 const loc = { file: 'external-lib.js', line: 10, column: 2 }
 
-describe('mutation recording seam', () => {
+describe('instrumentation runtime', () => {
   beforeEach(() => {
     traceCollector.clearTraces()
     traceCollector.setEnabled(true)
@@ -23,24 +22,7 @@ describe('mutation recording seam', () => {
     const externalState = reactive({ theme: 'dark' })
     traceCollector.startTrace({ type: 'manual', event: 'auto-external-recording' })
 
-    recordInstrumentedMutation({
-      target: externalState,
-      source: loc,
-      prop: 'theme',
-      pathMode: 'property',
-      nameMode: 'root',
-      operation: 'set',
-      untraced: () => {
-        externalState.theme = 'light'
-      },
-      traced: () => ({
-        before: externalState.theme,
-        after: () => externalState.theme,
-        run: () => {
-          externalState.theme = 'light'
-        }
-      })
-    })
+    __trace_set(externalState, 'theme', 'light', loc)
 
     const mutation = traceCollector.getCurrentTrace()!.events.find((e) => e.type === 'mutation') as MutationEvent
     expect(mutation).toBeDefined()
@@ -58,25 +40,15 @@ describe('mutation recording seam', () => {
     traceCollector.startTrace({ type: 'manual', event: 'window' })
 
     let windowId: number | undefined
-    recordInstrumentedMutation({
-      target: state,
-      source: loc,
-      prop: 'n',
-      pathMode: 'property',
-      nameMode: 'root',
-      operation: 'set',
-      untraced: () => {
+    __trace_set(
+      state,
+      'n',
+      () => {
+        windowId = traceCollector.getActiveMutation()?.id
         state.n = 1
       },
-      traced: () => ({
-        before: 0,
-        after: 1,
-        run: () => {
-          windowId = traceCollector.getActiveMutation()?.id
-          state.n = 1
-        }
-      })
-    })
+      loc
+    )
 
     expect(windowId).toBeDefined()
     expect(traceCollector.getActiveMutation()).toBeNull()

@@ -1,22 +1,95 @@
 import { toRaw } from 'vue'
 import { traceCollector } from './collector'
-import { getReactiveMeta, getReactivePathAndRoot, isRegisteredReactive } from './registry'
-import { redactValue } from './redact'
-import type { MutationEvent, MutationOperation, ReactiveMetadata, SourceLocation } from './types'
+import {
+  getReactiveMeta,
+  getReactivePathAndRoot,
+  isRegisteredReactive,
+  registerReactive
+} from './registry'
+import { configureRedact, redactValue, type RedactMatcher } from './redact'
+import type {
+  MutationEvent,
+  MutationOperation,
+  ReactiveMetadata,
+  SourceLocation,
+  TraceEventType
+} from './types'
+
+export interface TraceRuntimeConfig {
+  redact?: RedactMatcher[]
+  events?: readonly TraceEventType[]
+  maxMemoryMB?: number
+}
+
+/** @deprecated Use TraceRuntimeConfig. */
+export type RuntimeRedactConfig = Pick<TraceRuntimeConfig, 'redact'>
+
+/** Single configuration seam used by transformed modules. */
+export function __trace_configure(next: TraceRuntimeConfig): void {
+  if (next.redact !== undefined) configureRedact({ matchers: next.redact })
+  if (next.events !== undefined || next.maxMemoryMB !== undefined) {
+    traceCollector.configureRecording({ events: next.events, maxMemoryMB: next.maxMemoryMB })
+  }
+}
+
+export function __trace_register<T>(target: T, metadata?: Partial<ReactiveMetadata>): T {
+  return registerReactive(target, metadata)
+}
+
+export function __trace_register_external<T>(
+  target: T,
+  metadata?: { name?: string; origin?: string }
+): T {
+  return registerReactive(target, {
+    name: metadata?.name || 'external',
+    origin: metadata?.origin || 'external',
+    isExternal: true,
+    traceLevel: 'partial',
+    scope: 'local'
+  })
+}
+
+export function __trace_register_computed<T>(
+  target: T,
+  metadata?: Partial<ReactiveMetadata>
+): T {
+  registerReactive(target, { ...metadata, type: 'computed' })
+
+  const comp = target as any
+  if (comp) {
+    const handler = () => {
+      if (traceCollector.isEnabled()) {
+        traceCollector.recordComputedInvalidated({
+          name: metadata?.name || 'computed',
+          source: metadata?.source,
+          target
+        })
+      }
+    }
+    const origOnTrigger = comp.onTrigger || comp.effect?.onTrigger
+    comp.onTrigger = (event: any) => {
+      handler()
+      if (typeof origOnTrigger === 'function') origOnTrigger(event)
+    }
+    if (comp.effect) comp.effect.onTrigger = comp.onTrigger
+  }
+
+  return target
+}
 
 export interface TraceMutationOptions {
   rootName?: string
   path?: string[]
 }
 
-export interface MutationIdentity {
+interface MutationIdentity {
   target: any
   meta?: ReactiveMetadata | null
   rootName?: string
   path: string[]
 }
 
-export interface TracedWrite<T> {
+interface TracedWrite<T> {
   before: unknown
   after?: unknown | (() => unknown)
   run: () => T
@@ -174,7 +247,7 @@ function mutationName(identity: MutationIdentity, prop: any, nameMode: 'root' | 
  * Records one MutationEvent around a write: identity, redacted snapshots, and the
  * active-mutation window used to correlate component renders.
  */
-export function recordInstrumentedMutation<T>(input: {
+function recordInstrumentedMutation<T>(input: {
   target: any
   source: SourceLocation
   options?: TraceMutationOptions
@@ -217,4 +290,153 @@ export function recordInstrumentedMutation<T>(input: {
   } finally {
     traceCollector.setActiveMutation(null)
   }
+}
+
+function resolveWrite(target: any, prop: any, write: any): () => any {
+  return typeof write === 'function' ? write : () => (target[prop] = write)
+}
+
+export function __trace_set(
+  target: any,
+  prop: any,
+  write: (() => any) | any,
+  source: SourceLocation,
+  options?: TraceMutationOptions
+): any {
+  const performWrite = resolveWrite(target, prop, write)
+  return recordInstrumentedMutation({
+    target,
+    source,
+    options,
+    prop,
+    pathMode: 'property',
+    nameMode: 'root',
+    operation: 'set',
+    untraced: performWrite,
+    traced: ({ path, rootName }) => ({
+      before: safeClone(target[prop], path, rootName),
+      after: () => safeClone(target[prop], path, rootName),
+      run: performWrite
+    })
+  })
+}
+
+export function __trace_update(
+  target: any,
+  prop: any,
+  operator: '++' | '--',
+  isPrefix: boolean,
+  source: SourceLocation,
+  options?: TraceMutationOptions
+): any {
+  const untraced = () =>
+    operator === '++'
+      ? isPrefix
+        ? ++target[prop]
+        : target[prop]++
+      : isPrefix
+        ? --target[prop]
+        : target[prop]--
+
+  return recordInstrumentedMutation({
+    target,
+    source,
+    options,
+    prop,
+    pathMode: 'property',
+    nameMode: 'root',
+    operation: operator === '++' ? 'increment' : 'decrement',
+    untraced,
+    traced: ({ path, rootName }) => {
+      const rawBefore = target[prop]
+      const key = String(prop)
+      const numeric = typeof rawBefore === 'bigint' ? rawBefore : +rawBefore
+      const after =
+        operator === '++'
+          ? typeof numeric === 'bigint'
+            ? numeric + 1n
+            : numeric + 1
+          : typeof numeric === 'bigint'
+            ? numeric - 1n
+            : numeric - 1
+      return {
+        before: redactValue(numeric, { path, key, rootName }),
+        after: redactValue(after, { path, key, rootName }),
+        run: () => {
+          target[prop] = after
+          return isPrefix ? after : numeric
+        }
+      }
+    }
+  })
+}
+
+export function __trace_call(
+  target: any,
+  method: string,
+  args: any[],
+  source: SourceLocation,
+  options?: TraceMutationOptions
+): any {
+  let operation: MutationOperation = method as MutationOperation
+  if (method === 'set') operation = 'map-set'
+  else if (method === 'add') operation = 'set-add'
+  else if (method === 'delete') operation = 'delete'
+  else if (method === 'clear') operation = 'clear'
+
+  return recordInstrumentedMutation({
+    target,
+    source,
+    options,
+    pathMode: 'collection',
+    nameMode: 'qualified',
+    operation,
+    untraced: () => target[method](...args),
+    traced: ({ path, rootName }) => ({
+      before: safeClone(target, path, rootName),
+      after: () => safeClone(target, path, rootName),
+      run: () => target[method](...args)
+    })
+  })
+}
+
+export function __trace_delete(
+  target: any,
+  prop: any,
+  source: SourceLocation,
+  options?: TraceMutationOptions
+): boolean {
+  return recordInstrumentedMutation({
+    target,
+    source,
+    options,
+    prop,
+    pathMode: 'property',
+    nameMode: 'root',
+    operation: 'delete',
+    untraced: () => delete target[prop],
+    traced: ({ path, rootName }) => ({
+      before: safeClone(target[prop], path, rootName),
+      run: () => delete target[prop]
+    })
+  })
+}
+
+export function __trace_watch_cb<T extends (...args: any[]) => any>(
+  cb: T,
+  metadata?: { name?: string; source?: SourceLocation }
+): T {
+  if (typeof cb !== 'function') return cb
+
+  const wrapped = function (this: any, ...args: any[]) {
+    if (traceCollector.isEnabled()) {
+      traceCollector.recordWatchExecuted({
+        name: metadata?.name || cb.name || 'watch',
+        source: metadata?.source
+      })
+    }
+    return cb.apply(this, args)
+  } as unknown as T
+
+  return wrapped
 }

@@ -105,7 +105,7 @@ state.profile.name = 'B'
 
     it('rejects tracer package sources regardless of checkout path', () => {
       const repoRoot = resolve(import.meta.dirname, '..')
-      const pkgFile = resolve(repoRoot, 'packages/runtime/src/trace-helpers.ts')
+      const pkgFile = resolve(repoRoot, 'packages/runtime/src/instrumentation-runtime.ts')
       expect(transformCode('const a = ref(0)', pkgFile, { root: repoRoot })).toBeNull()
     })
   })
@@ -1573,6 +1573,7 @@ export const useCart = () => {
 
       const traced = reactive({ v: 7 })
       __trace_register(traced, { name: 'mod', type: 'reactive' })
+      traceCollector.startTrace({ type: 'manual', event: 'compiled-compound-assignment' })
       const locArg = loc
       const fn = new Function(
         '__trace_set',
@@ -1583,6 +1584,17 @@ export const useCart = () => {
       const value = fn(__trace_set, traced, locArg)
       expect(value).toBe(3)
       expect(traced.v).toBe(3)
+
+      const mutations = traceCollector
+        .getCurrentTrace()!
+        .events.filter((event): event is MutationEvent => event.type === 'mutation')
+      expect(mutations).toHaveLength(1)
+      expect(mutations[0]).toMatchObject({
+        operation: 'set',
+        before: 7,
+        after: 3,
+        source: { file: 'mod.ts', line: 1, column: 0 }
+      })
     })
   })
 })
@@ -1680,5 +1692,3 @@ describe('§23 — scope classification', () => {
     expect(devtools.innerHTML).toContain('src/App.vue:20')
   })
 })
-
-
