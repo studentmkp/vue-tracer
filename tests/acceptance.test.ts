@@ -4,8 +4,7 @@ import { createApp, ref, reactive, computed, watch, watchEffect, nextTick, defin
 import { createPinia, defineStore } from 'pinia'
 import {
   traceCollector,
-  aggregateTraceEvents,
-  filterTraceEvents,
+  queryTraceView,
   installInteractionCapture,
   uninstallInteractionCapture,
   registerExternalReactive,
@@ -963,10 +962,10 @@ set.add('guest')
       expect(trace.events.length).toBe(50)
 
       // Aggregate with threshold = 3
-      const aggregated = aggregateTraceEvents(trace.events, 3)
-      expect(aggregated.length).toBe(1)
+      const view = queryTraceView(trace, {}, 3)
+      expect(view.events.length).toBe(1)
 
-      const group = aggregated[0] as AggregatedMutationGroup
+      const group = view.events[0] as AggregatedMutationGroup
       expect(group.type).toBe('aggregated-mutation')
       expect(group.name).toBe('list.value')
       expect(group.count).toBe(50)
@@ -1292,14 +1291,16 @@ export const useCart = () => {
       traceCollector.recordComponentRender('CartBadge', 10, 12, 'CartBadge.vue')
 
       // Filter only mutations
-      const filteredMutations = filterTraceEvents(trace.events, { types: ['mutation'] })
-      expect(filteredMutations.length).toBe(1)
-      expect(filteredMutations[0].type).toBe('mutation')
+      const filteredMutations = queryTraceView(trace, { types: ['mutation'] })
+      expect(filteredMutations.filteredEventCount).toBe(1)
+      expect(filteredMutations.events.length).toBe(1)
+      expect(filteredMutations.events[0].type).toBe('mutation')
 
       // Filter only renders
-      const filteredRenders = filterTraceEvents(trace.events, { types: ['component-render'] })
-      expect(filteredRenders.length).toBe(1)
-      expect(filteredRenders[0].type).toBe('component-render')
+      const filteredRenders = queryTraceView(trace, { types: ['component-render'] })
+      expect(filteredRenders.filteredEventCount).toBe(1)
+      expect(filteredRenders.events.length).toBe(1)
+      expect(filteredRenders.events[0].type).toBe('component-render')
     })
 
     it('filters events by text query matching variable, component, and file names', () => {
@@ -1320,14 +1321,14 @@ export const useCart = () => {
       })
 
       // Search by variable name
-      const cartResults = filterTraceEvents(trace.events, { query: 'cart' })
-      expect(cartResults.length).toBe(1)
-      expect((cartResults[0] as MutationEvent).name).toBe('cartItems')
+      const cartResults = queryTraceView(trace, { query: 'cart' })
+      expect(cartResults.filteredEventCount).toBe(1)
+      expect((cartResults.events[0] as MutationEvent).name).toBe('cartItems')
 
       // Search by file name
-      const themeResults = filterTraceEvents(trace.events, { query: 'theme' })
-      expect(themeResults.length).toBe(1)
-      expect((themeResults[0] as MutationEvent).name).toBe('userTheme')
+      const themeResults = queryTraceView(trace, { query: 'theme' })
+      expect(themeResults.filteredEventCount).toBe(1)
+      expect((themeResults.events[0] as MutationEvent).name).toBe('userTheme')
     })
 
     it('implements Section 42 Noise Reduction with appCodeOnly filter', () => {
@@ -1355,8 +1356,8 @@ export const useCart = () => {
       expect(trace.events.filter((e) => e.type === 'mutation').length).toBe(2)
 
       // Filter with appCodeOnly: true
-      const appOnly = filterTraceEvents(trace.events, { appCodeOnly: true })
-      const mutationEvents = appOnly.filter((e) => e.type === 'mutation') as MutationEvent[]
+      const appOnly = queryTraceView(trace, { appCodeOnly: true })
+      const mutationEvents = appOnly.events.filter((e) => e.type === 'mutation') as MutationEvent[]
 
       expect(mutationEvents.length).toBe(1)
       expect(mutationEvents[0].name).toBe('appState')
@@ -1368,13 +1369,13 @@ export const useCart = () => {
       traceCollector.recordComponentRender('FastComponent', 10, 10.5, 'Fast.vue') // duration: 0.5ms
       traceCollector.recordComponentRender('SlowComponent', 10, 25, 'Slow.vue') // duration: 15ms
 
-      const slowRenders = filterTraceEvents(trace.events, { minDuration: 5 })
-      expect(slowRenders.length).toBe(1)
-      expect((slowRenders[0] as ComponentRenderEvent).componentName).toBe('SlowComponent')
+      const slowRenders = queryTraceView(trace, { minDuration: 5 })
+      expect(slowRenders.tracks.renders.length).toBe(1)
+      expect((slowRenders.tracks.renders[0] as ComponentRenderEvent).componentName).toBe('SlowComponent')
 
-      const fastRenders = filterTraceEvents(trace.events, { component: 'fast' })
-      expect(fastRenders.length).toBe(1)
-      expect((fastRenders[0] as ComponentRenderEvent).componentName).toBe('FastComponent')
+      const fastRenders = queryTraceView(trace, { component: 'fast' })
+      expect(fastRenders.tracks.renders.length).toBe(1)
+      expect((fastRenders.tracks.renders[0] as ComponentRenderEvent).componentName).toBe('FastComponent')
     })
   })
 

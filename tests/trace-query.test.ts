@@ -102,6 +102,65 @@ describe('Trace query view-model', () => {
     const view = queryTraceView(trace, { appCodeOnly: true })
     expect(view.tracks.triggers.map((t) => t.componentName)).toEqual(['App'])
   })
+
+  it('TraceCollector stores raw traces and does not own filter or aggregation', () => {
+    expect((traceCollector as any).getFilteredEvents).toBeUndefined()
+    expect((traceCollector as any).getAggregatedEvents).toBeUndefined()
+    expect((traceCollector as any).filterTraceEvents).toBeUndefined()
+    expect((traceCollector as any).aggregateTraceEvents).toBeUndefined()
+  })
+
+  it('projection returns full view model with filtered events, aggregates, and total vs visible counts', () => {
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'full-view' })!
+    for (let i = 0; i < 4; i++) {
+      traceCollector.recordMutation({
+        name: 'count',
+        operation: 'set',
+        before: i,
+        after: i + 1,
+        source: { file: 'src/count.ts', line: 1, column: 0 }
+      })
+    }
+    traceCollector.recordComponentRender('App', 1, 3, 'src/App.vue')
+
+    // Filter only mutations: raw trace has 5 events, 4 match filter, 4 mutations aggregate into 1 group
+    const view = queryTraceView(trace, { types: ['mutation'] }, 3)
+
+    expect(view.totalEventCount).toBe(5)
+    expect(view.filteredEventCount).toBe(4)
+    expect(view.visibleEventCount).toBe(4)
+    expect(view.filteredEvents).toHaveLength(4)
+    expect(view.events).toHaveLength(1)
+    expect(view.aggregates).toHaveLength(1)
+    expect(view.aggregates[0].type).toBe('aggregated-mutation')
+    expect(view.aggregates[0].count).toBe(4)
+    expect(view.tracks.mutations).toHaveLength(1)
+    expect(view.tracks.renders).toHaveLength(0)
+  })
+
+  it('reflects dropped events through raw trace retention into projection view model', () => {
+    traceCollector.configureRecording({ events: ['mutation'] })
+    const trace = traceCollector.startTrace({ type: 'manual', event: 'drop-test' })!
+
+    traceCollector.recordMutation({
+      name: 'count',
+      operation: 'set',
+      before: 0,
+      after: 1,
+      source: { file: 'src/count.ts', line: 1, column: 0 }
+    })
+    // Dropped by recording filter:
+    const render = traceCollector.recordComponentRender('App', 1, 3, 'src/App.vue')
+    expect(render).toBeNull()
+
+    const view = queryTraceView(trace)
+    expect(view.totalEventCount).toBe(1)
+    expect(view.filteredEventCount).toBe(1)
+    expect(view.tracks.mutations).toHaveLength(1)
+    expect(view.tracks.renders).toHaveLength(0)
+
+    traceCollector.configureRecording()
+  })
 })
 
 describe('Overlay consumes one trace query including component-trigger', () => {
